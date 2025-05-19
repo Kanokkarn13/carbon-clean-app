@@ -26,11 +26,6 @@ const ArticlesScreen = () => {
         <Text style={styles.title}>Articles</Text>
       </View>
 
-      {/* Search Bar */}
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={20} color="gray" style={styles.searchIcon} />
-        <TextInput placeholder="Search Challenge" style={styles.input} />
-      </View>
 
       {/* Article List */}
       <FlatList
@@ -71,18 +66,6 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: 'bold',
-  },
-  searchBar: {
-    flexDirection: 'row',
-    backgroundColor: '#f2f2f2',
-    borderRadius: 12,
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    marginBottom: 20,
-    height: 40,
-  },
-  searchIcon: {
-    marginRight: 8,
   },
   input: {
     flex: 1,

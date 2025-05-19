@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import {
   View,
@@ -92,7 +91,7 @@ export default function EmissionCalculate() {
         <ScrollView
           style={{ padding: 20 }}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: 40 }}
+          contentContainerStyle={{ paddingTop: 20, paddingBottom: 40 }}
         >
           {/* Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
@@ -191,7 +190,7 @@ export default function EmissionCalculate() {
               marginTop: 10,
               alignItems: 'center'
             }}>
-              <Text style={{ color: '#fff', fontWeight: 'bold' }}>Calculate Taxi</Text>
+              <Text style={{ color: '#fff', fontWeight: 'bold' }}>Calculate</Text>
             </TouchableOpacity>
             {taxiResult && <Text style={{ marginTop: 10, textAlign: 'center', fontWeight: 'bold', color: '#0db760' }}>{taxiResult}</Text>}
           </Section>
@@ -212,7 +211,7 @@ export default function EmissionCalculate() {
               marginTop: 10,
               alignItems: 'center'
             }}>
-              <Text style={{ color: '#fff', fontWeight: 'bold' }}>Calculate Bus</Text>
+              <Text style={{ color: '#fff', fontWeight: 'bold' }}>Calculate</Text>
             </TouchableOpacity>
             {busResult && <Text style={{ marginTop: 10, textAlign: 'center', fontWeight: 'bold', color: '#0db760' }}>{busResult}</Text>}
           </Section>

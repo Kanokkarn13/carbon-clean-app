@@ -56,11 +56,14 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route }) => {
   return (
     <View style={styles.container}>
       <View style={styles.inner}>
-        {user.profile_picture ? (
-          <Image source={{ uri: user.profile_picture }} style={styles.avatar} />
-        ) : (
-          <View style={styles.placeholderAvatar} />
-        )}
+        <Image
+          source={{
+            uri:
+              user.profile_picture ||
+              'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+          }}
+          style={styles.avatar}
+        />
 
         <TextInput
           style={styles.input}
@@ -122,20 +125,12 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     marginBottom: 30,
   },
-  placeholderAvatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#e5f9e7',
-    alignSelf: 'center',
-    marginBottom: 30,
-  },
   input: {
     borderWidth: 1,
     borderColor: '#d9f5de',
     borderRadius: 10,
     padding: 14,
-    marginBottom: 24, // 🔼 เพิ่มระยะห่างระหว่าง textfield
+    marginBottom: 24,
     fontSize: 16,
     backgroundColor: '#f6fff8',
     color: '#333',
