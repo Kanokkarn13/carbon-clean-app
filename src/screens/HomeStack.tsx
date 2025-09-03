@@ -7,6 +7,15 @@ import Home from './Home';
 import SetGoalScreen from './SetGoalScreen';
 import Dashboard from './Dashboard'; 
 
+
+export type RootStackParamList = {
+  Home: { user: any } | undefined;
+  Calculation: { user: any } | undefined;
+  EmissonCalculate: { user: any } | undefined;
+  ReduceCalculate: { user: any } | undefined;
+  SetGoal: { user: any } | undefined;
+  Dashboard: { user: any } | undefined;
+};
 const Stack = createNativeStackNavigator();
 
 const HomeStack = ({ user }: { user: any }) => {
@@ -17,7 +26,9 @@ const HomeStack = ({ user }: { user: any }) => {
         component={HomeWrapper}
         initialParams={{ user }}
       />
-      <Stack.Screen name="Calculation" component={Calculation} />
+      <Stack.Screen name="Calculation">
+        {(props) => <Calculation {...props} user={user} />}
+      </Stack.Screen>
       <Stack.Screen name="EmissonCalculate" component={EmissonCalculate} />
       <Stack.Screen name="ReduceCalculate" component={ReduceCalculate} />
       <Stack.Screen name="SetGoal" component={SetGoalScreen} />

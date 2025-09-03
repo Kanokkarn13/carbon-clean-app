@@ -3,20 +3,19 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import HomeStack from './HomeStack';
 import ArticleScreen from './ArticleScreen';
-import TrackingScreen from './TrackingScreen';
+import TrackingStack from './TrackingStack';
 import ProfileScreen from './ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 
 type MainTabsProps = {
-  user: any; // 👈 เพิ่ม props `user`
+  user: any;
 };
 
 const MainTabs = ({ user }: MainTabsProps) => {
   return (
-    <Tab.Navigator
-        id={undefined}
-        screenOptions={({ route }) => ({
+    <Tab.Navigator id={undefined}
+      screenOptions={({ route }) => ({
         headerShown: false,
         tabBarIcon: ({ color, size }) => {
           let iconName: any;
@@ -32,20 +31,18 @@ const MainTabs = ({ user }: MainTabsProps) => {
     >
       <Tab.Screen
         name="Home"
-        children={() => <HomeStack user={user} />} // 👈 ส่ง user ไปยัง HomeStack
+        children={() => <HomeStack user={user} />}
       />
       <Tab.Screen name="Article" component={ArticleScreen} />
       <Tab.Screen
         name="Tracking"
-        children={() => <TrackingScreen user={user} />} // ✅ ส่ง user ไปตรงๆ
+        children={() => <TrackingStack user={user} />} // ✅ ใช้ children และส่ง user เป็น props
       />
-
       <Tab.Screen
-            name="Profile"
-            component={ProfileScreen}
-            initialParams={{ user }} // 👈 ส่ง user ไปยัง ProfileScreen
-    />
-
+        name="Profile"
+        component={ProfileScreen}
+        initialParams={{ user }}
+      />
     </Tab.Navigator>
   );
 };

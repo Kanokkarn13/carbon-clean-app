@@ -7,170 +7,344 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 
+const theme = {
+  primary: '#10B981',
+  primaryDark: '#059669',
+  bg: '#F6FAF8',
+  card: '#FFFFFF',
+  text: '#0B1721',
+  sub: '#6B7280',
+  border: '#E5E7EB',
+  chip: '#ECFDF5',
+};
+
 const HomeScreen = ({ user, navigation }) => {
-  const [activities, setActivities] = useState([]);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
   const isFocused = useIsFocused();
 
   useEffect(() => {
-    if (user?.user_id && isFocused) {
-      const url = `http://192.168.0.102:3000/api/recent-activity/${user.user_id}`;
-      fetch(url)
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data.activities)) {
-            setActivities(data.activities.slice(0, 10));
-          } else {
-            setActivities([]);
-          }
-        })
-        .catch(() => setActivities([]));
-    }
+    const fetchActivities = async () => {
+      if (!user?.user_id || !isFocused) return;
+      setLoading(true);
+      try {
+        const url = `http://192.168.0.102:3000/api/recent-activity/${user.user_id}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        setActivities(Array.isArray(data.activities) ? data.activities.slice(0, 10) : []);
+      } catch {
+        setActivities([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchActivities();
   }, [user, isFocused]);
 
-  const handleActivityPress = () => {
-    navigation.navigate('Calculation');
-  };
+  const handleActivityPress = () => navigation.navigate('Calculation');
+
+  const fullName = user ? `${user.fname} ${user.lname}` : 'Guest';
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
+        {/* Header */}
         <View style={styles.header}>
-          <Image
-            source={{ uri: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }}
-            style={styles.avatar}
-          />
-          <View>
-            <Text style={styles.greeting}>Hello,</Text>
-            <Text style={styles.name}>{user ? `${user.fname} ${user.lname}` : 'Guest'}</Text>
+          <View style={styles.headerLeft}>
+            <Image
+              source={{ uri: user?.profile_picture || 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }}
+              style={styles.avatar}
+            />
+            <View>
+              <Text style={styles.greeting}>Hello,</Text>
+              <Text style={styles.name}>{fullName}</Text>
+            </View>
           </View>
           <View style={styles.pointsBadge}>
+            <Ionicons name="sparkles-outline" size={14} color={theme.primaryDark} />
             <Text style={styles.pointsText}>0 P</Text>
           </View>
         </View>
 
-        <View style={styles.taskCardWrapper}>
+        {/* Task / Goal card */}
+        <View style={styles.card}>
           <ImageBackground
             source={require('../../assets/trees.png')}
-            style={styles.taskCard}
-            imageStyle={{ borderRadius: 16 }}
+            style={styles.taskBg}
+            imageStyle={{ borderRadius: 16, opacity: 0.12 }}
           >
-            <Text style={styles.taskText}>complete your tasks</Text>
-            <Text style={styles.progressText}>0%</Text>
-            <TouchableOpacity
-              style={styles.addGoalBtn}
-              onPress={() => navigation.navigate('SetGoal', { user })}
-            >
-              <Text style={styles.addGoalText}>Set Your Goal</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View>
+                <Text style={styles.cardTitle}>Complete your tasks</Text>
+                <Text style={styles.progressBig}>0%</Text>
+                <View style={styles.progressBarWrap}>
+                  <View style={[styles.progressBarFill, { width: '0%' }]} />
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.pillBtn}
+                onPress={() => navigation.navigate('SetGoal', { user })}
+                activeOpacity={0.9}
+              >
+                <Ionicons name="flag-outline" size={16} color={theme.primaryDark} />
+                <Text style={styles.pillBtnText}>Set your goal</Text>
+              </TouchableOpacity>
+            </View>
           </ImageBackground>
         </View>
 
-        {/* ✅ This is the corrected Dashboard button */}
-        <TouchableOpacity
-          style={styles.dashboardBtn}
-          onPress={() => navigation.navigate('Dashboard', { user })}
-        >
-          <Text style={styles.dashboardText}>Go To Dashboard</Text>
-        </TouchableOpacity>
+        {/* Quick actions */}
+        <View style={styles.quickRow}>
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => navigation.navigate('Dashboard', { user })}
+            activeOpacity={0.9}
+          >
+            <View style={styles.quickIcon}>
+              <Ionicons name="speedometer-outline" size={20} color={theme.primaryDark} />
+            </View>
+            <Text style={styles.quickLabel}>Dashboard</Text>
+          </TouchableOpacity>
 
-        <Text style={styles.sectionTitle}>Activity</Text>
-        <TouchableOpacity style={styles.activityBox} onPress={handleActivityPress}>
-          <View style={styles.co2Circle}>
-            <Text style={styles.co2XX}>Go to calculate</Text>
-          </View>
-          <View style={styles.activityInfo}>
-            <Text style={styles.activityText}>Emission</Text>
-            <Text style={styles.emission}>0.00 kgCO₂e</Text>
-            <Text style={[styles.activityText, { marginTop: 10 }]}>Last month</Text>
-            <Text style={styles.lastMonth}>0.00 kgCO₂e</Text>
-            <Text style={[styles.activityText, { marginTop: 10 }]}>total</Text>
-            <Text style={styles.total}>0.00 kgCO₂e</Text>
-          </View>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => navigation.navigate('Calculation')}
+            activeOpacity={0.9}
+          >
+            <View style={styles.quickIcon}>
+              <Ionicons name="calculator-outline" size={20} color={theme.primaryDark} />
+            </View>
+            <Text style={styles.quickLabel}>Calculate</Text>
+          </TouchableOpacity>
 
-        <Text style={styles.sectionTitle}>Recent Activity</Text>
-        {activities.map((activity, index) => (
-          <View key={index} style={styles.recentBox}>
-            <Ionicons name={activity.type === 'Cycling' ? 'bicycle' : 'walk'} size={24} color="#000" />
-            <Text style={styles.recentText}>{activity.type}: {activity.distance_km} km</Text>
-          </View>
-        ))}
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => navigation.navigate('SetGoal', { user })}
+            activeOpacity={0.9}
+          >
+            <View style={styles.quickIcon}>
+              <Ionicons name="leaf-outline" size={20} color={theme.primaryDark} />
+            </View>
+            <Text style={styles.quickLabel}>Goals</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Activity summary */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Activity</Text>
+          <TouchableOpacity style={styles.activityBox} onPress={handleActivityPress} activeOpacity={0.9}>
+            <View style={styles.co2Circle}>
+              <Ionicons name="trending-down-outline" size={18} color={theme.primary} />
+              <Text style={styles.co2XX}>Calculate</Text>
+            </View>
+            <View style={styles.activityInfo}>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Emission</Text>
+                <Text style={styles.statValue}>0.00 kgCO₂e</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Last month</Text>
+                <Text style={styles.statMuted}>0.00 kgCO₂e</Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Total</Text>
+                <Text style={styles.statPositive}>0.00 kgCO₂e</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Recent Activity */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Recent Activity</Text>
+          {loading ? (
+            <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+              <ActivityIndicator color={theme.primary} />
+            </View>
+          ) : activities.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Ionicons name="time-outline" size={18} color={theme.sub} />
+              <Text style={styles.emptyText}>No recent activity yet</Text>
+            </View>
+          ) : (
+            activities.map((activity, idx) => {
+              const icon =
+                activity.type === 'Cycling'
+                  ? 'bicycle-outline'
+                  : activity.type === 'Running'
+                  ? 'run-outline'
+                  : 'walk-outline';
+              return (
+                <View key={`${activity.type}-${idx}`} style={styles.recentItem}>
+                  <View style={styles.recentIcon}>
+                    <Ionicons name={icon as any} size={18} color={theme.primaryDark} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.recentTitle}>{activity.type}</Text>
+                    <Text style={styles.recentSub}>{Number(activity.distance_km || 0)} km</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={18} color={theme.border} />
+                </View>
+              );
+            })
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', paddingHorizontal: 20 },
-  header: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
-  avatar: { width: 50, height: 50, borderRadius: 25, marginRight: 10 },
-  greeting: { fontSize: 14, color: '#555' },
-  name: { fontSize: 18, fontWeight: 'bold' },
+  container: { padding: 20, paddingBottom: 44 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#fff' },
+  greeting: { fontSize: 12, color: theme.sub },
+  name: { fontSize: 18, fontWeight: '700', color: theme.text },
   pointsBadge: {
-    backgroundColor: '#00AA55',
-    borderRadius: 12,
+    backgroundColor: theme.chip,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginLeft: 'auto',
+    paddingVertical: 6,
+    borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  pointsText: { color: '#fff', fontWeight: 'bold' },
-  taskCardWrapper: {
-    backgroundColor: '#d2f4d2',
-    borderRadius: 20,
-    marginTop: 20,
-  },
-  taskCard: {
-    padding: 16,
+  pointsText: { color: theme.primaryDark, fontWeight: '700' },
+
+  card: {
+    backgroundColor: theme.card,
     borderRadius: 16,
+    padding: 16,
+    marginTop: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  cardTitle: { color: theme.text, fontWeight: '700', fontSize: 16 },
+  taskBg: { borderRadius: 16 },
+  progressBig: { fontSize: 32, fontWeight: '800', color: theme.text, marginTop: 2 },
+  progressBarWrap: {
+    height: 8,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 999,
+    marginTop: 8,
     overflow: 'hidden',
-    alignItems: 'flex-start',
   },
-  taskText: { color: '#444', fontSize: 14, marginBottom: 8 },
-  progressText: { fontSize: 36, fontWeight: 'bold', color: '#000' },
-  addGoalBtn: {
-    backgroundColor: '#fff',
-    paddingVertical: 8,
-    paddingHorizontal: 20,
-    borderRadius: 20,
-    marginTop: 10,
+  progressBarFill: {
+    height: 8,
+    backgroundColor: theme.primary,
+    borderRadius: 999,
   },
-  addGoalText: { color: '#00AA55', fontWeight: 'bold' },
-  dashboardBtn: {
-    backgroundColor: '#00AA55',
-    paddingVertical: 12,
-    borderRadius: 12,
+  pillBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: theme.border,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 20,
+    gap: 8,
   },
-  dashboardText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginTop: 10, marginBottom: 6 },
+  pillBtnText: { color: theme.primaryDark, fontWeight: '700' },
+
+  quickRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
+  quickCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  quickIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: theme.chip,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickLabel: { fontWeight: '700', color: theme.text },
+
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.text, marginBottom: 8 },
   activityBox: {
-    backgroundColor: '#f2f2f2',
-    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 14,
     flexDirection: 'row',
-    padding: 16,
+    padding: 14,
+    gap: 14,
+    alignItems: 'center',
   },
-  co2Circle: { justifyContent: 'center', alignItems: 'center', flex: 1 },
-  co2XX: { fontSize: 28, fontWeight: 'bold', color: '#00AA55' },
-  activityInfo: { flex: 1 },
-  activityText: { fontSize: 12, color: '#888' },
-  emission: { fontSize: 16, fontWeight: 'bold' },
-  lastMonth: { fontSize: 14, color: '#aaa' },
-  total: { fontSize: 14, color: '#00AA55' },
-  recentBox: {
-    backgroundColor: '#f8f8f8',
+  co2Circle: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: theme.chip,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  co2XX: { fontSize: 14, fontWeight: '800', color: theme.primaryDark },
+  activityInfo: { flex: 1, gap: 8 },
+  statRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statLabel: { color: theme.sub, fontSize: 12 },
+  statValue: { color: theme.text, fontWeight: '700' },
+  statMuted: { color: theme.sub, fontWeight: '600' },
+  statPositive: { color: theme.primaryDark, fontWeight: '700' },
+
+  emptyState: {
+    borderWidth: 1,
+    borderColor: theme.border,
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
+    alignItems: 'center',
+    gap: 6,
+  },
+  emptyText: { color: theme.sub },
+
+  recentItem: {
+    marginTop: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 10,
+    gap: 12,
   },
-  recentText: { marginLeft: 10, fontSize: 16, fontWeight: 'bold' },
+  recentIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: theme.chip,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+  },
+  recentTitle: { fontWeight: '700', color: theme.text },
+  recentSub: { color: theme.sub, marginTop: 2 },
 });
 
 export default HomeScreen;

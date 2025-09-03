@@ -1,12 +1,34 @@
-const db = require('../config/db'); // ✅ ตรวจสอบว่า path ตรงกับที่อยู่จริง
+const db = require('../config/db');
 const bcrypt = require('bcrypt');
 
-// 🔐 Login Controller
+// Helpers
+const toIntOrNull = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.floor(n) : null;
+};
+
+const shapeUser = (row) => {
+  if (!row) return null;
+  return {
+    user_id: row.user_id,
+    fname: row.fname,
+    lname: row.lname,
+    email: row.email,
+    phone: row.phone,
+    vehicle: row.vehicle ?? null,
+    // 👇 ensure number (or null) and consistent snake_case key
+    house_member: toIntOrNull(row.house_member),
+    walk_goal: toIntOrNull(row.walk_goal),
+    bic_goal: toIntOrNull(row.bic_goal),
+    // never send password hash to the client
+  };
+};
+
+// 🔐 Login
 exports.login = async (req, res) => {
   console.log('💡 [Login] authController.login was called');
 
   const { email, password } = req.body;
-
   const query = 'SELECT * FROM users WHERE email = ?';
   console.log('🔍 SQL Query:', query);
 
@@ -28,15 +50,18 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
-    console.log('✅ Login successful for:', user.email);
-    return res.json({ success: true, message: 'Login successful', data: user });
+    const safeUser = shapeUser(user);
+    console.log('✅ Login successful for:', safeUser.email, 'house_member=', safeUser.house_member);
+
+    // ✅ return normalized user so the app reads user.house_member as a number
+    return res.json({ success: true, message: 'Login successful', data: safeUser });
   } catch (err) {
     console.error('❌ Error during login:', err.message);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
-// 📌 REGISTER (แก้ name → fname)
+// 📌 REGISTER (fname fixed)
 exports.register = async (req, res) => {
   const { fname, lname, email, password, phone } = req.body;
 
@@ -52,19 +77,19 @@ exports.register = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newUser = { fname, lname, email, password: hashedPassword, phone }; // ✅ ใช้ fname
+    const newUser = { fname, lname, email, password: hashedPassword, phone };
     await db.query('INSERT INTO users SET ?', newUser);
 
     res.status(201).json({ success: true, message: 'User registered successfully' });
   } catch (error) {
+    console.error('❌ Register error:', error.message);
     res.status(500).json({ message: 'Server error' });
   }
 };
 
-
-// 📌 UPDATE
+// 📌 UPDATE (parse house_member to int)
 exports.updateUser = async (req, res) => {
-  const { user_id, fname, lname, email, phone } = req.body;
+  const { user_id, fname, lname, email, phone, vehicle, house_member } = req.body;
   console.log('📥 Received body:', req.body);
 
   if (!user_id || !fname || !lname || !email || !phone) {
@@ -72,16 +97,26 @@ exports.updateUser = async (req, res) => {
   }
 
   try {
-    const query = 'UPDATE users SET fname = ?, lname = ?, email = ?, phone = ? WHERE user_id = ?';
-    await db.query(query, [fname, lname, email, phone, user_id]);
+    const hm = toIntOrNull(house_member); // 👈 parse once here
+    const query = `
+      UPDATE users 
+      SET fname = ?, lname = ?, email = ?, phone = ?, vehicle = ?, house_member = ?
+      WHERE user_id = ?
+    `;
+    await db.query(query, [fname, lname, email, phone, vehicle ?? null, hm, user_id]);
 
-    return res.json({ success: true, message: 'User updated successfully' });
+    // optionally return the updated user
+    const [rows] = await db.query('SELECT * FROM users WHERE user_id = ?', [user_id]);
+    const safeUser = shapeUser(rows[0]);
+
+    return res.json({ success: true, message: 'User updated successfully', data: safeUser });
   } catch (err) {
     console.error('❌ Error updating user:', err.message);
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
 
+// 🎯 Goals
 exports.setGoal = async (req, res) => {
   const { user_id, goalType, value } = req.body;
   console.log('📥 Received body:', req.body);
@@ -92,20 +127,13 @@ exports.setGoal = async (req, res) => {
 
   const column = goalType === 'walking' ? 'walk_goal' : 'bic_goal';
   try {
-    await db.query(`UPDATE users SET ${column} = ? WHERE user_id = ?`, [value, user_id]);
-    return res.json({ success: true, message: 'Goal updated' });
+    await db.query(`UPDATE users SET ${column} = ? WHERE user_id = ?`, [toIntOrNull(value), user_id]);
+
+    // return shaped user (optional)
+    const [rows] = await db.query('SELECT * FROM users WHERE user_id = ?', [user_id]);
+    return res.json({ success: true, message: 'Goal updated', data: shapeUser(rows[0]) });
   } catch (err) {
     console.error('❌ DB Error:', err.message);
     return res.status(500).json({ message: 'Server error' });
   }
 };
-
-
-
-
-
-
-
-  
-  
-  

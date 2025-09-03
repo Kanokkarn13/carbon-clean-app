@@ -2,17 +2,39 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  Button,
   StyleSheet,
   Alert,
   TouchableOpacity,
   Modal,
   TextInput,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
+
 import { useTracking } from '../hooks/useTracking';
 import MapViewComponent from '../components/MapViewComponent';
 
-export default function TrackingScreen({ user }: { user: any }) {
+type Navigation = NativeStackNavigationProp<any>;
+type TrackingScreenProps = { user: any };
+
+const theme = {
+  primary: '#10B981',
+  primaryDark: '#059669',
+  bg: '#F6FAF8',
+  card: '#FFFFFF',
+  text: '#0B1721',
+  sub: '#6B7280',
+  border: '#E5E7EB',
+  chip: '#ECFDF5',
+  danger: '#EF4444',
+  dangerDark: '#DC2626',
+};
+
+export default function TrackingScreen({ user }: TrackingScreenProps) {
+  const navigation = useNavigation<Navigation>();
+
   const [goalType, setGoalType] = useState<'walking' | 'cycling'>('walking');
   const [isFinished, setIsFinished] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -61,166 +83,348 @@ export default function TrackingScreen({ user }: { user: any }) {
       : 'http://192.168.0.102:3000/api/save-cycling';
 
   return (
-    <View style={styles.maincontainer}>
-      <View style={styles.mapContainer}>
-        <MapViewComponent location={location} />
-      </View>
-
-      <View style={styles.toggleContainer}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      {/* Header */}
+      <View style={styles.header}>
         <TouchableOpacity
-          style={[styles.toggleButton, goalType === 'walking' && styles.activeToggle]}
-          onPress={() => setGoalType('walking')}
+          style={styles.headerSide}
+          onPress={() => navigation.goBack()}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Text style={[styles.toggleText, goalType === 'walking' && styles.activeText]}>Walking</Text>
+          <Ionicons name="arrow-back" size={22} color={theme.primary} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.toggleButton, goalType === 'cycling' && styles.activeToggle]}
-          onPress={() => setGoalType('cycling')}
-        >
-          <Text style={[styles.toggleText, goalType === 'cycling' && styles.activeText]}>Cycling</Text>
-        </TouchableOpacity>
+        <Text style={styles.title}>Tracking</Text>
+        <View style={styles.headerSide} />
       </View>
 
-      <View style={styles.container}>
-        {[{ value: distance, label: 'Distance', unit: 'km' },
-          { value: speed, label: 'Speed', unit: 'km/h' },
-          { value: time, label: 'Time', unit: 'mins', formatter: formatTime },
-          ...(goalType === 'walking' ? [{ value: steps, label: 'Steps', unit: '' }] : []),
-        ].map((metric, index) => (
-          <View key={index} style={styles.minicontainer}>
-            <Text style={styles.metricValue}>
-              {metric.formatter ? metric.formatter(metric.value) : metric.value.toFixed(3)}
-            </Text>
-            <Text style={styles.metricLabel}>
-              {metric.label} {metric.unit && `(${metric.unit})`}
-            </Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.debugContainer}>
-        <Text style={styles.debugText}>Tracking Status: {isTracking ? 'ACTIVE' : 'INACTIVE'}</Text>
-        <Text style={styles.debugText}>Subscription: {subscription ? 'EXISTS' : 'NULL'}</Text>
-      </View>
-
-      <Button
-        title={isTracking ? 'Stop Tracking' : 'Start Tracking'}
-        onPress={isTracking ? handleStop : handleStart}
-        color={isTracking ? '#FF5252' : '#4CAF50'}
-      />
-
-      
-
-      <Button
-        title="Save Record"
-        onPress={() => setShowModal(true)}
-        color="#2196F3"
-        disabled={!isFinished}
-      />
-
-      {location && (
-        <View style={styles.locationInfo}>
-          <Text style={styles.locationText}>Latitude: {location.coords.latitude.toFixed(6)}</Text>
-          <Text style={styles.locationText}>Longitude: {location.coords.longitude.toFixed(6)}</Text>
-          <Text style={styles.locationText}>Speed: {speed.toFixed(2)} km/h</Text>
-          <Text style={styles.locationText}>Updates Received: {updateCount}</Text>
+      <View style={styles.maincontainer}>
+        {/* Map */}
+        <View style={styles.mapContainer}>
+          <MapViewComponent location={location} />
         </View>
-      )}
 
-      <Modal
-        visible={showModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowModal(false)}
-      >
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000000aa' }}>
-          <View style={{ backgroundColor: 'white', padding: 20, borderRadius: 10, width: '90%' }}>
-            <Text style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 10 }}>Save Activity</Text>
+        {/* Toggle */}
+        <View style={styles.toggleContainer}>
+          {(['walking', 'cycling'] as const).map((t) => {
+            const active = goalType === t;
+            return (
+              <TouchableOpacity
+                key={t}
+                style={[styles.toggleBtn, active && styles.toggleBtnActive]}
+                onPress={() => setGoalType(t)}
+                activeOpacity={0.9}
+              >
+                <Ionicons
+                  name={t === 'walking' ? 'walk-outline' : 'bicycle-outline'}
+                  size={16}
+                  color={active ? '#FFF' : theme.primaryDark}
+                />
+                <Text style={[styles.toggleText, active && styles.toggleTextActive]}>
+                  {t === 'walking' ? 'Walking' : 'Cycling'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-            <Text>Title</Text>
-            <TextInput
-              value={inputTitle}
-              onChangeText={setInputTitle}
-              placeholder="Enter title"
-              style={{ borderWidth: 1, borderColor: '#ccc', marginBottom: 10, padding: 8 }}
-            />
+        {/* Metrics */}
+        <View style={styles.metricsCard}>
+          {[
+            { icon: 'map-outline', value: distance.toFixed(3), label: 'Distance', unit: 'km' },
+            { icon: 'speedometer-outline', value: speed.toFixed(2), label: 'Speed', unit: 'km/h' },
+            { icon: 'time-outline', value: formatTime(time), label: 'Time', unit: '' },
+            ...(goalType === 'walking'
+              ? [{ icon: 'footsteps-outline', value: String(steps), label: 'Steps', unit: '' }]
+              : []),
+          ].map((m, idx) => (
+            <View key={`${m.label}-${idx}`} style={styles.metricItem}>
+              <View style={styles.metricIcon}>
+                <Ionicons name={m.icon as any} size={16} color={theme.primaryDark} />
+              </View>
+              <Text style={styles.metricValue}>{m.value}</Text>
+              <Text style={styles.metricLabel}>
+                {m.label} {m.unit ? `(${m.unit})` : ''}
+              </Text>
+            </View>
+          ))}
+        </View>
 
-            <Text>Description</Text>
-            <TextInput
-              value={inputDesc}
-              onChangeText={setInputDesc}
-              placeholder="Enter description"
-              multiline
-              numberOfLines={3}
-              style={{ borderWidth: 1, borderColor: '#ccc', marginBottom: 10, padding: 8 }}
-            />
+        {/* Debug */}
+        <View style={styles.debugContainer}>
+          <Text style={styles.debugText}>Tracking: {isTracking ? 'ACTIVE' : 'INACTIVE'}</Text>
+          <Text style={styles.debugText}>Subscription: {subscription ? 'EXISTS' : 'NULL'}</Text>
+          {location ? (
+            <Text style={styles.debugTextSmall}>
+              Lat {location.coords.latitude.toFixed(6)} · Lng {location.coords.longitude.toFixed(6)} ·
+              Speed {speed.toFixed(2)} km/h · Updates {updateCount}
+            </Text>
+          ) : null}
+        </View>
 
-            <Text style={{ marginBottom: 5 }}>Distance: {distance.toFixed(2)} km</Text>
-            <Text style={{ marginBottom: 5 }}>Duration: {formatTime(time)}</Text>
-            {goalType === 'walking' && <Text style={{ marginBottom: 10 }}>Steps: {steps}</Text>}
+        {/* Actions */}
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
+            style={[styles.actionBtn, isTracking ? styles.btnDanger : styles.btnPrimary]}
+            onPress={isTracking ? handleStop : handleStart}
+            activeOpacity={0.9}
+          >
+            <Ionicons name={isTracking ? 'square-outline' : 'play-outline'} size={18} color="#FFF" />
+            <Text style={styles.actionText}>{isTracking ? 'Stop' : 'Start'}</Text>
+          </TouchableOpacity>
 
-            <Button
-              title="Confirm Save"
-              onPress={async () => {
-                const payload: any = {
-                  title: inputTitle,
-                  description: inputDesc,
-                  distance_km: distance,
-                  duration_sec: time,
-                  user_id: user.user_id,
-                };
-                if (goalType === 'walking') payload.step_total = steps;
+          <TouchableOpacity
+            style={[styles.actionBtn, styles.btnSecondary, !isFinished && { opacity: 0.6 }]}
+            onPress={() => setShowModal(true)}
+            disabled={!isFinished}
+            activeOpacity={0.9}
+          >
+            <Ionicons name="save-outline" size={18} color={isFinished ? theme.primaryDark : theme.sub} />
+            <Text style={[styles.actionTextSecondary, !isFinished && { color: theme.sub }]}>Save</Text>
+          </TouchableOpacity>
+        </View>
 
-                try {
-                  const response = await fetch(saveEndpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                  });
+        {/* Save Modal */}
+        <Modal visible={showModal} transparent animationType="slide" onRequestClose={() => setShowModal(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Save Activity</Text>
+                <TouchableOpacity onPress={() => setShowModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close" size={22} color={theme.sub} />
+                </TouchableOpacity>
+              </View>
 
-                  const contentType = response.headers.get('content-type');
-                  if (contentType && contentType.includes('application/json')) {
-                    const result = await response.json();
-                    if (response.ok) {
-                      Alert.alert('✅ Saved', result.message || 'Activity saved!');
-                    } else {
-                      Alert.alert('❌ Error', result.message || 'Failed to save activity');
+              <View style={styles.inputWrap}>
+                <Text style={styles.inputLabel}>Title</Text>
+                <TextInput
+                  value={inputTitle}
+                  onChangeText={setInputTitle}
+                  placeholder="Morning ride"
+                  placeholderTextColor={theme.sub}
+                  style={styles.input}
+                />
+              </View>
+
+              <View style={styles.inputWrap}>
+                <Text style={styles.inputLabel}>Description</Text>
+                <TextInput
+                  value={inputDesc}
+                  onChangeText={setInputDesc}
+                  placeholder="Nice weather, smooth pace"
+                  placeholderTextColor={theme.sub}
+                  style={[styles.input, { height: 96, textAlignVertical: 'top' }]}
+                  multiline
+                />
+              </View>
+
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryText}>Distance: {distance.toFixed(2)} km</Text>
+                <Text style={styles.summaryText}>Duration: {formatTime(time)}</Text>
+                {goalType === 'walking' ? <Text style={styles.summaryText}>Steps: {steps}</Text> : null}
+              </View>
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.modalBtn, styles.modalBtnGhost]} onPress={() => setShowModal(false)}>
+                  <Text style={styles.modalBtnGhostText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalBtnPrimary]}
+                  onPress={async () => {
+                    const payload: any = {
+                      title: inputTitle,
+                      description: inputDesc,
+                      distance_km: distance,
+                      duration_sec: time,
+                      user_id: user.user_id,
+                    };
+                    if (goalType === 'walking') payload.step_total = steps;
+
+                    try {
+                      const response = await fetch(saveEndpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+
+                      const contentType = response.headers.get('content-type');
+                      if (contentType && contentType.includes('application/json')) {
+                        const result = await response.json();
+                        if (response.ok) {
+                          Alert.alert('✅ Saved', result.message || 'Activity saved!');
+                          setShowModal(false);
+                          navigation.navigate('CarbonOffsetScreen', { user, distance });
+                          resetLocalState();
+                        } else {
+                          Alert.alert('❌ Error', result.message || 'Failed to save activity');
+                        }
+                      } else {
+                        const text = await response.text();
+                        Alert.alert('❌ Server Error', text);
+                      }
+                    } catch (error) {
+                      Alert.alert('❌ Network Error', 'Could not connect to server');
                     }
-                  } else {
-                    const text = await response.text();
-                    Alert.alert('❌ Server Error', text);
-                  }
-                } catch (error) {
-                  Alert.alert('❌ Network Error', 'Could not connect to server');
-                }
-
-                setShowModal(false);
-                resetLocalState();
-              }}
-            />
-
-            <Button title="Cancel" color="gray" onPress={() => setShowModal(false)} />
+                  }}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={18} color="#FFF" />
+                  <Text style={styles.modalBtnPrimaryText}>Confirm Save</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  maincontainer: { flex: 1, padding: 20, backgroundColor: '#ffffff' },
-  mapContainer: { flex: 1, height: 250, marginVertical: 10, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#e0e0e0' },
-  toggleContainer: { flexDirection: 'row', justifyContent: 'center', marginVertical: 12 },
-  toggleButton: { paddingVertical: 10, paddingHorizontal: 30, borderRadius: 20, backgroundColor: '#eeeeee', marginHorizontal: 8 },
-  toggleText: { fontSize: 16, color: '#555', fontWeight: '500' },
-  activeToggle: { backgroundColor: '#4CAF50' },
-  activeText: { color: '#fff', fontWeight: 'bold' },
-  container: { backgroundColor: '#f6f6f6', padding: 15, margin: 10, borderRadius: 16, borderWidth: 1, borderColor: '#ddd', width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
-  minicontainer: { width: '48%', marginVertical: 8, padding: 12, backgroundColor: '#ffffff', borderRadius: 12, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, elevation: 1 },
-  metricValue: { fontSize: 24, fontWeight: 'bold', color: '#2e7d32', marginBottom: 4 },
-  metricLabel: { fontSize: 14, color: '#888' },
-  debugContainer: { padding: 10, backgroundColor: '#f1f8e9', borderRadius: 8, marginVertical: 10 },
-  debugText: { fontSize: 12, color: '#33691E' },
-  locationInfo: { marginTop: 20, alignItems: 'center' },
-  locationText: { fontSize: 14, color: '#444' },
+  /* Header */
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    backgroundColor: theme.bg,
+  },
+  headerSide: { width: 28, alignItems: 'flex-start' },
+  title: { fontSize: 20, fontWeight: '800', color: theme.primaryDark },
+
+  maincontainer: { flex: 1, padding: 16, backgroundColor: theme.bg },
+
+  mapContainer: {
+    height: 260,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: '#FFF',
+  },
+
+  // Toggle chips
+  toggleContainer: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 12 },
+  toggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: '#FFF',
+  },
+  toggleBtnActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+  toggleText: { color: theme.primaryDark, fontWeight: '700' },
+  toggleTextActive: { color: '#FFF' },
+
+  // Metrics
+  metricsCard: {
+    backgroundColor: theme.card,
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: theme.border,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  metricItem: {
+    width: '48%',
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+  },
+  metricIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: theme.chip,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  metricValue: { fontSize: 22, fontWeight: '800', color: theme.text },
+  metricLabel: { fontSize: 12, color: theme.sub },
+
+  // Debug
+  debugContainer: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    borderRadius: 12,
+  },
+  debugText: { color: theme.primaryDark, fontWeight: '700' },
+  debugTextSmall: { color: theme.primaryDark, marginTop: 4 },
+
+  // Actions
+  actionsRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
+  actionBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  btnPrimary: { backgroundColor: theme.primary },
+  btnSecondary: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: theme.border },
+  btnDanger: { backgroundColor: theme.danger },
+  actionText: { color: '#FFF', fontWeight: '800' },
+  actionTextSecondary: { color: theme.primaryDark, fontWeight: '800' },
+
+  // Modal
+  modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', padding: 16 },
+  modalCard: {
+    width: '100%',
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  modalTitle: { fontSize: 18, fontWeight: '800', color: theme.text },
+
+  inputWrap: { marginTop: 10 },
+  inputLabel: { color: theme.sub, marginBottom: 6, fontSize: 13 },
+  input: {
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: theme.text,
+  },
+
+  summaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 12 },
+  summaryText: { color: theme.text, fontWeight: '700' },
+
+  modalActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  modalBtnGhost: { backgroundColor: '#FFF', borderWidth: 1, borderColor: theme.border },
+  modalBtnPrimary: { backgroundColor: theme.primary },
+  modalBtnGhostText: { color: theme.text, fontWeight: '800' },
+  modalBtnPrimaryText: { color: '#FFF', fontWeight: '800' },
 });

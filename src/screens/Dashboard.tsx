@@ -1,253 +1,354 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, Dimensions, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  Dimensions,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  SafeAreaView,
+} from 'react-native';
 import { LineChart, PieChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 
 const screenWidth = Dimensions.get('window').width;
 
-const Dashboard: React.FC = () => {
+const theme = {
+  primary: '#10B981',
+  primaryDark: '#059669',
+  orange: '#FB923C',
+  bg: '#F6FAF8',
+  card: '#FFFFFF',
+  text: '#0B1721',
+  sub: '#6B7280',
+  border: '#E5E7EB',
+};
+
+type Period = 'week' | 'month' | 'year';
+
+function startOfDay(d: Date) {
+  const x = new Date(d); x.setHours(0,0,0,0); return x;
+}
+function iso(d: Date) { return startOfDay(d).toISOString().slice(0,10); }
+
+export default function Dashboard() {
   const route = useRoute();
   const navigation = useNavigation();
   const { user } = route.params as { user: any };
+
+  // UI / data state
+  const [loading, setLoading] = useState(false);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [period, setPeriod] = useState<Period>('week');
+  const [offset, setOffset] = useState(0); // 0 = current period, -1 = previous, +1 = next
   const [walkingProgress, setWalkingProgress] = useState<number>(0);
   const [cyclingProgress, setCyclingProgress] = useState<number>(0);
-  const [walkingData, setWalkingData] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]); // Initialize with zeros
-  const [cyclingData, setCyclingData] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]); // Initialize with zeros
-  const [labels, setLabels] = useState<string[]>(['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']);
-  const [emissionData, setEmissionData] = useState<number>(0.1); // Minimum value
-  const [reductionData, setReductionData] = useState<number>(0.1); // Minimum value
+  const [emissionData, setEmissionData] = useState<number>(70);
+  const [reductionData, setReductionData] = useState<number>(30);
 
   useEffect(() => {
-    const fetchActivityData = async () => {
+    (async () => {
+      setLoading(true);
       try {
-        const response = await fetch(`http://192.168.0.102:3000/api/recent-activity/${user.user_id}`);
-        const result = await response.json();
-
-        const weekData: { [day: string]: { walking: number; cycling: number } } = {
-          Mo: { walking: 0, cycling: 0 },
-          Tu: { walking: 0, cycling: 0 },
-          We: { walking: 0, cycling: 0 },
-          Th: { walking: 0, cycling: 0 },
-          Fr: { walking: 0, cycling: 0 },
-          Sa: { walking: 0, cycling: 0 },
-          Su: { walking: 0, cycling: 0 },
-        };
-
-        result.activities.forEach((activity: any) => {
-          const date = new Date(activity.created_at);
-          const day = date.toLocaleDateString('en-US', { weekday: 'short' });
-          const key = day.slice(0, 2);
-          const raw = activity.distance_km;
-          const distance = isFinite(raw) && !isNaN(raw) ? Math.max(0, raw) : 0; // Ensure positive finite numbers
-
-          if (weekData[key]) {
-            if (activity.type === 'Walking') {
-              weekData[key].walking += distance;
-            } else if (activity.type === 'Cycling') {
-              weekData[key].cycling += distance;
-            }
-          }
-        });
-
-        const walkingData = Object.values(weekData).map((d) => (isFinite(d.walking) ? d.walking : 0));
-        const cyclingData = Object.values(weekData).map((d) => (isFinite(d.cycling) ? d.cycling : 0));
-
-        setLabels(Object.keys(weekData));
-        setWalkingData(walkingData);
-        setCyclingData(cyclingData);
-
-        const totalWalking = walkingData.reduce((acc, val) => acc + val, 0);
-        const totalCycling = cyclingData.reduce((acc, val) => acc + val, 0);
-
-        const walkingPercentage = Math.min((totalWalking / (user.walk_goal || 100)) * 100, 100);
-        const cyclingPercentage = Math.min((totalCycling / (user.bic_goal || 100)) * 100, 100);
-
-        setWalkingProgress(walkingPercentage);
-        setCyclingProgress(cyclingPercentage);
-
-        // Convert emission and reduction values to percentages
-        const emission = Math.max(0.1, totalWalking * 0.5 + totalCycling * 0.2);
-        const reduction = Math.max(0.1, totalWalking * 0.3 + totalCycling * 0.1);
-
-        const emissionPercentage = 70  ; // Example: set to 50% manually
-        const reductionPercentage = 30 ; // Example: set to 30% manually
-
-
-        setEmissionData(emissionPercentage);
-        setReductionData(reductionPercentage);
-
-      } catch (err) {
-        console.error('Failed to load activity data:', err);
+        const res = await fetch(`http://192.168.0.102:3000/api/recent-activity/${user.user_id}`);
+        const json = await res.json();
+        setActivities(Array.isArray(json.activities) ? json.activities : []);
+      } catch (e) {
+        setActivities([]);
+      } finally {
+        setLoading(false);
       }
-    };
-
-    fetchActivityData();
+    })();
   }, [user]);
 
+const { labels, wData, cData } = useMemo(() => {
+  const now = new Date();
+  let rangeLabels: string[] = [];
+  let dateKeys: string[] = [];
+
+  if (period === 'week') {
+    const base = startOfDay(now);
+    const day = (base.getDay() + 6) % 7; // Mon=0..Sun=6
+    base.setDate(base.getDate() - day + offset * 7);
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(base); d.setDate(base.getDate() + i);
+      rangeLabels.push(d.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2));
+      dateKeys.push(iso(d));
+    }
+
+    // init daily buckets
+    const buckets: Record<string, { walking: number; cycling: number }> = {};
+    dateKeys.forEach(k => (buckets[k] = { walking: 0, cycling: 0 }));
+
+    activities.forEach(a => {
+      const key = iso(new Date(a.created_at));
+      if (!buckets[key]) return;
+      const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
+      if (a.type === 'Walking') buckets[key].walking += dist;
+      if (a.type === 'Cycling') buckets[key].cycling += dist;
+    });
+
+    return {
+      labels: rangeLabels,
+      wData: dateKeys.map(k => buckets[k].walking),
+      cData: dateKeys.map(k => buckets[k].cycling),
+    };
+  }
+
+  if (period === 'month') {
+    // 👇 Aggregate a month into weekly bins (W1–W5)
+    const base = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const daysInMonth = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+    const binCount = Math.ceil(daysInMonth / 7); // 4–5 bins
+    rangeLabels = Array.from({ length: binCount }, (_, i) => `W${i + 1}`);
+
+    const weekBuckets = Array.from({ length: binCount }, () => ({ walking: 0, cycling: 0 }));
+
+    activities.forEach(a => {
+      const d = new Date(a.created_at);
+      const sameMonth = d.getFullYear() === base.getFullYear() && d.getMonth() === base.getMonth();
+      if (!sameMonth) return;
+
+      const day = d.getDate();                         // 1..daysInMonth
+      const weekIdx = Math.min(Math.floor((day - 1) / 7), binCount - 1);
+      const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
+      if (a.type === 'Walking') weekBuckets[weekIdx].walking += dist;
+      if (a.type === 'Cycling') weekBuckets[weekIdx].cycling += dist;
+    });
+
+    return {
+      labels: rangeLabels,
+      wData: weekBuckets.map(b => b.walking),
+      cData: weekBuckets.map(b => b.cycling),
+    };
+  }
+
+  // year
+  const year = now.getFullYear() + offset;
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  rangeLabels = monthNames.slice();
+  const buckets: Record<number, { walking: number; cycling: number }> = {};
+  monthNames.forEach((_, i) => (buckets[i] = { walking: 0, cycling: 0 }));
+
+  activities.forEach(a => {
+    const d = new Date(a.created_at);
+    if (d.getFullYear() !== year) return;
+    const m = d.getMonth();
+    const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
+    if (a.type === 'Walking') buckets[m].walking += dist;
+    if (a.type === 'Cycling') buckets[m].cycling += dist;
+  });
+
+  return {
+    labels: rangeLabels,
+    wData: monthNames.map((_, i) => buckets[i].walking),
+    cData: monthNames.map((_, i) => buckets[i].cycling),
+  };
+}, [activities, period, offset]);
+
+  // overall progress (not tied to selected range)
+  useEffect(() => {
+    const totalWalking = activities
+      .filter(a => a.type === 'Walking')
+      .reduce((s,a) => s + (Number.isFinite(a.distance_km) ? Math.max(0,a.distance_km) : 0), 0);
+    const totalCycling = activities
+      .filter(a => a.type === 'Cycling')
+      .reduce((s,a) => s + (Number.isFinite(a.distance_km) ? Math.max(0,a.distance_km) : 0), 0);
+
+    const walkingPct = Math.min((totalWalking / (user.walk_goal || 100)) * 100, 100);
+    const cyclingPct = Math.min((totalCycling / (user.bic_goal || 100)) * 100, 100);
+    setWalkingProgress(walkingPct);
+    setCyclingProgress(cyclingPct);
+  }, [activities, user]);
+
   const pieChartData = [
-    {
-      name: 'Emission',
-      population: emissionData,
-      color: '#808080', // Grey color
-      legendFontColor: '#7F7F7F',
-      legendFontSize: 15,
-    },
-    {
-      name: 'Reduction',
-      population: reductionData,
-      color: '#0db760',
-      legendFontColor: '#7F7F7F',
-      legendFontSize: 15,
-    },
+    { name: 'Emission',  population: Math.max(0.1, emissionData),  color: '#9CA3AF', legendFontColor: '#6B7280', legendFontSize: 14 },
+    { name: 'Reduction', population: Math.max(0.1, reductionData), color: theme.primary, legendFontColor: '#6B7280', legendFontSize: 14 },
   ];
 
   const chartConfig = {
     backgroundColor: '#ffffff',
     backgroundGradientFrom: '#ffffff',
     backgroundGradientTo: '#ffffff',
-    decimalPlaces: 0,
-    color: (opacity = 1) => `rgba(13, 183, 96, ${opacity})`,
-    labelColor: () => '#666',
-    propsForDots: {
-      r: '4',
-      strokeWidth: '2',
-      stroke: '#0db760',
-    },
-    propsForBackgroundLines: {
-      strokeDasharray: '',
-    },
+    decimalPlaces: period === 'year' ? 0 : 1,
+    color: (o = 1) => `rgba(16,185,129,${o})`,
+    labelColor: () => theme.sub,
+    propsForDots: { r: '3.5', strokeWidth: '2' },
+    propsForBackgroundLines: { strokeDasharray: '' },
   };
 
+  // period title text
+  const periodTitle = useMemo(() => {
+    const now = new Date();
+    if (period === 'week') {
+      const base = startOfDay(now);
+      const day = (base.getDay() + 6) % 7;
+      base.setDate(base.getDate() - day + offset * 7);
+      const end = new Date(base); end.setDate(base.getDate() + 6);
+      const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return `${fmt(base)} – ${fmt(end)}`;
+    }
+    if (period === 'month') {
+      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    }
+    const y = now.getFullYear() + offset;
+    return String(y);
+  }, [period, offset]);
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#0db760" />
-        </TouchableOpacity>
-        <Text style={styles.title}>Dashboard</Text>
-      </View>
+    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      <ScrollView style={{ flex: 1 }}>
+        <View style={styles.container}>
+          {/* Header — centered title, no overlap */}
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.headerSide} onPress={() => navigation.goBack()} hitSlop={{top:8,bottom:8,left:8,right:8}}>
+              <Ionicons name="arrow-back" size={22} color={theme.primary} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Dashboard</Text>
+            <View style={styles.headerSide} />{/* spacer keeps title centered */}
+          </View>
 
-      {/* LineChart with data validation */}
-      {walkingData.length > 0 && cyclingData.length > 0 && (
-        <LineChart
-          data={{
-            labels: labels,
-            datasets: [
-              {
-                data: walkingData,
-                color: () => '#0db760',
-                strokeWidth: 2,
-              },
-              {
-                data: cyclingData,
-                color: () => '#ffa726',
-                strokeWidth: 2,
-              },
-            ],
-            legend: ["Walking", "Cycling"]
-          }}
-          width={screenWidth - 32}
-          height={250}
-          chartConfig={chartConfig}
-          style={styles.chart}
-          bezier
-          fromZero // Ensures chart starts from zero
-        />
-      )}
+          {/* Period selector */}
+          <View style={styles.card}>
+            <View style={styles.periodRow}>
+              <View style={styles.segment}>
+                {(['week','month','year'] as Period[]).map(p => {
+                  const active = p === period;
+                  return (
+                    <TouchableOpacity key={p} onPress={() => { setPeriod(p); setOffset(0); }} style={[styles.segBtn, active && styles.segBtnActive]}>
+                      <Text style={[styles.segText, active && styles.segTextActive]}>{p[0].toUpperCase()+p.slice(1)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={styles.navBtns}>
+                <TouchableOpacity onPress={() => setOffset(o => o-1)} style={styles.navBtn}>
+                  <Ionicons name="chevron-back" size={18} color={theme.primaryDark} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setOffset(0)} style={[styles.navBtn, {marginHorizontal:4}]}>
+                  <Text style={{color:theme.primaryDark,fontWeight:'700'}}>This</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setOffset(o => o+1)} style={styles.navBtn}>
+                  <Ionicons name="chevron-forward" size={18} color={theme.primaryDark} />
+                </TouchableOpacity>
+              </View>
+            </View>
 
-      <View style={styles.progressContainer}>
-        <View style={styles.progressBox}>
-          <Text style={styles.progressLabel}>Walk progress</Text>
-          <Text style={styles.progressValue}>{walkingProgress.toFixed(1)}%</Text>
-        </View>
-        <View style={styles.progressBox}>
-          <Text style={styles.progressLabel}>Cycling progress</Text>
-          <Text style={styles.progressValue}>{cyclingProgress.toFixed(1)}%</Text>
-        </View>
-      </View>
+            <Text style={styles.periodTitle}>{periodTitle}</Text>
 
-      {/* PieChart with data validation */}
-      {emissionData > 0 && reductionData > 0 && (
-        <View style={styles.pieChartContainer}>
-          <Text style={styles.pieChartLabel}>Emission vs Reduction</Text>
-          <PieChart
-            data={pieChartData}
-            width={screenWidth - 32}
-            height={220}
-            chartConfig={{
-              backgroundColor: '#ffffff',
-              color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-              labelColor: () => '#000',
-            }}
-            accessor="population"
-            backgroundColor="transparent"
-            paddingLeft="15"
-            absolute // Shows absolute values instead of percentages
-          />
+            {loading ? (
+              <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                <ActivityIndicator color={theme.primary} />
+              </View>
+            ) : (
+              <LineChart
+                data={{
+                  labels,
+                  datasets: [
+                    { data: wData, color: (o = 1) => `rgba(16,185,129,${o})`, strokeWidth: 2 }, // Walking
+                    { data: cData, color: (o = 1) => `rgba(251,146,60,${o})`, strokeWidth: 2 },   // Cycling
+                  ],
+                  legend: ['Walking', 'Cycling'],
+                }}
+                width={screenWidth - 32}
+                height={260}
+                chartConfig={chartConfig}
+                style={styles.chart}
+                bezier
+                fromZero
+              />
+            )}
+          </View>
+
+          {/* Overall progress (not tied to selected period) */}
+          <View style={styles.progressRow}>
+            <View style={styles.progressCard}>
+              <Text style={styles.progressLabel}>Walk progress</Text>
+              <Text style={styles.progressValue}>{walkingProgress.toFixed(1)}%</Text>
+            </View>
+            <View style={styles.progressCard}>
+              <Text style={styles.progressLabel}>Cycling progress</Text>
+              <Text style={styles.progressValue}>{cyclingProgress.toFixed(1)}%</Text>
+            </View>
+          </View>
+
+          {/* Pie */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Emission vs Reduction</Text>
+            <PieChart
+              data={[
+                { name: 'Emission', population: Math.max(0.1, emissionData), color: '#9CA3AF', legendFontColor: '#6B7280', legendFontSize: 14 },
+                { name: 'Reduction', population: Math.max(0.1, reductionData), color: theme.primary, legendFontColor: '#6B7280', legendFontSize: 14 },
+              ]}
+              width={screenWidth - 32}
+              height={230}
+              chartConfig={{ backgroundColor:'#fff', color:(o=1)=>`rgba(0,0,0,${o})`, labelColor:()=> '#000' }}
+              accessor="population"
+              backgroundColor="transparent"
+              paddingLeft="10"
+              absolute
+            />
+          </View>
         </View>
-      )}
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-    padding: 16,
-    marginTop: 20,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 16,
-  },
-  backButton: {
-    paddingRight: 10,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#0db760',
-  },
-  chart: {
-    borderRadius: 16,
-    marginVertical: 8,
-  },
-  progressContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 20,
-  },
-  progressBox: {
-    width: (screenWidth - 64) / 2,
-    backgroundColor: '#f2f2f2',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-  },
-  progressLabel: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#0db760',
-  },
-  progressValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  pieChartContainer: {
-    marginTop: 30,
-    alignItems: 'center',
-  },
-  pieChartLabel: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#0db760',
-    marginBottom: 10,
-  },
-});
+  container: { padding: 16, paddingBottom: 32 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  headerSide: { width: 28, alignItems: 'flex-start' },
+  title: { fontSize: 20, fontWeight: '800', color: theme.primaryDark },
 
-export default Dashboard;
+  card: {
+    backgroundColor: theme.card,
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  cardTitle: { fontWeight: '700', color: theme.text, marginBottom: 10, fontSize: 16 },
+
+  periodRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.border,
+    padding: 4,
+  },
+  segBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999 },
+  segBtnActive: { backgroundColor: theme.primary },
+  segText: { color: theme.primaryDark, fontWeight: '700' },
+  segTextActive: { color: '#FFF' },
+
+  navBtns: { flexDirection: 'row', alignItems: 'center' },
+  navBtn: { borderWidth: 1, borderColor: theme.border, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#FFF' },
+  periodTitle: { color: theme.sub, marginTop: 8, fontWeight: '700' },
+
+  chart: { borderRadius: 12, marginTop: 8 },
+
+  progressRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
+  progressCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    padding: 14,
+    alignItems: 'center',
+  },
+  progressLabel: { color: theme.sub, fontWeight: '700' },
+  progressValue: { color: theme.text, fontWeight: '800', fontSize: 20, marginTop: 6 },
+});
