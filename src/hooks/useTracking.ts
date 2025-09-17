@@ -4,19 +4,50 @@ import { Pedometer } from 'expo-sensors';
 import * as Location from 'expo-location';
 import { calculateDistance } from '../utils/distance';
 
-// ===== Configuration =====
-const MAX_ACCURACY = 35;            // m (ignore update if accuracy แย่มาก)
-const MAX_SPEED = 150;              // km/h (cap)
-const HISTORY_SIZE = 5;             // smoothing ความเร็ว
+/**
+ * ================= Configuration =================
+ */
 
-// Drift guards
-const MIN_MOVE_METERS_BASE = 5;     // ระยะฐานขั้นต่ำที่ยอมรับว่า "ขยับจริง"
-const DRIFT_FACTOR = 1.5;           // คูณกับผลรวม accuracy สองจุด
+// GPS base caps
+const MAX_SPEED = 150;                 // km/h cap
+const HISTORY_SIZE = 5;                // speed smoothing (moving average)
 
-// Stationary detection (ล็อกเมื่อหยุดนิ่ง)
-const STATIONARY_SPEED_KMH = 0.8;   // ต่ำกว่านี้โดยเฉลี่ยถือว่าหยุดนิ่ง
-const STATIONARY_WINDOW = 8;        // เก็บประวัติ 8 จุดล่าสุด
-const STATIONARY_MOVE_SUM = 6;      // m ถ้าการขยับรวมในหน้าต่าง < 6m = หยุดนิ่ง
+// GPS drift guards (outdoor-friendly)
+const BASE_MAX_ACCURACY = 35;          // m
+const BASE_MIN_MOVE_METERS = 5;        // m
+const BASE_DRIFT_FACTOR = 1.5;         // * (acc_prev + acc_now)
+
+// Indoor-relaxed thresholds
+const INDOOR_MAX_ACCURACY = 80;        // m
+const INDOOR_MIN_MOVE_METERS = 3;      // m
+const INDOOR_DRIFT_FACTOR = 1.2;       // * (acc_prev + acc_now)
+
+// Stationary detection
+const STATIONARY_SPEED_KMH = 0.8;      // avg speed below this => stationary
+const STATIONARY_WINDOW = 8;           // last N samples
+const STATIONARY_MOVE_SUM = 6;         // total move (m) within window
+
+// Step-based fallback (indoor-friendly)
+const STRIDE_M = 0.72;                 // average step length in meters (tune per user)
+const STEP_SPEED_WINDOW_SEC = 8;       // rolling window for step speed (seconds)
+
+// Watchdog: if no movement for this long, force speed -> 0
+const NO_MOVE_TIMEOUT_MS = 3000;
+
+/**
+ * ============== Helper types ==============
+ */
+type StepPoint = { t: number; steps: number };
+
+/**
+ * Coarse indoor heuristic:
+ * - poor accuracy (>= 50m) OR
+ * - we see step gains but GPS speed is flaky
+ */
+function isLikelyIndoor(accNow: number | undefined, recentStepGain: number): boolean {
+  const acc = typeof accNow === 'number' ? accNow : 999;
+  return acc >= 50 || recentStepGain > 0;
+}
 
 export const useTracking = () => {
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
@@ -32,31 +63,62 @@ export const useTracking = () => {
   const prevTimestamp = useRef<number>(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pedometerSubscription = useRef<Pedometer.Subscription | null>(null);
+
+  // Speed smoothing (include zeros!)
   const speedHistory = useRef<number[]>([]);
 
-  // สำหรับตรวจจับหยุดนิ่ง
-  const moveHistory = useRef<number[]>([]);      // เก็บ displacement (m)
-  const speedHistoryWindow = useRef<number[]>([]); // เก็บ speed (km/h)
+  // Stationary detection buffers
+  const moveHistory = useRef<number[]>([]);           // displacement (m)
+  const speedHistoryWindow = useRef<number[]>([]);    // speed (km/h)
   const isStationaryRef = useRef<boolean>(false);
 
-  // Time tracking
+  // Step fallback buffers
+  const prevStepsRef = useRef<number>(0);
+  const stepWindowRef = useRef<StepPoint[]>([]);      // rolling window of (time, stepDelta)
+
+  // Watchdog to force speed -> 0 if no movement
+  const lastMovementAtRef = useRef<number>(0);
+
+  /**
+   * ============== Time tracking ==============
+   */
   useEffect(() => {
     if (isTracking) {
       intervalRef.current = setInterval(() => setTime((p) => p + 1), 1000);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [isTracking]);
 
-  // Step tracking
+  /**
+   * ============== Step tracking ==============
+   */
   useEffect(() => {
     const subscribeToPedometer = async () => {
       const isAvailable = await Pedometer.isAvailableAsync();
       if (!isAvailable) return;
+
       pedometerSubscription.current = Pedometer.watchStepCount((result) => {
+        const now = Date.now();
+        const delta = Math.max(0, result.steps - prevStepsRef.current);
+        prevStepsRef.current = result.steps;
+
+        if (delta > 0) {
+          // steps happened => update last-movement marker
+          lastMovementAtRef.current = now;
+
+          const arr = stepWindowRef.current;
+          arr.push({ t: now, steps: delta });
+
+          // Trim old entries beyond the window
+          const cutoff = now - STEP_SPEED_WINDOW_SEC * 1000;
+          while (arr.length && arr[0].t < cutoff) arr.shift();
+        }
+
         setSteps(result.steps);
       });
     };
@@ -65,8 +127,29 @@ export const useTracking = () => {
     return () => pedometerSubscription.current?.remove();
   }, [isTracking]);
 
-  // Speed calculation fallback (จากตำแหน่ง)
-  const calculateSpeedFallback = (newLoc: Location.LocationObject): number => {
+  /**
+   * Speed from steps over a rolling window
+   */
+  const speedFromStepsKmh = (): number => {
+    const arr = stepWindowRef.current;
+    if (!arr.length) return 0;
+
+    const now = Date.now();
+    const cutoff = now - STEP_SPEED_WINDOW_SEC * 1000;
+    const recent = arr.filter((x) => x.t >= cutoff);
+    if (!recent.length) return 0;
+
+    const totalSteps = recent.reduce((a, b) => a + b.steps, 0);
+    const dtSec = Math.max(1, (now - recent[0].t) / 1000);
+    const meters = totalSteps * STRIDE_M;
+    const mps = meters / dtSec;
+    return Math.min(mps * 3.6, MAX_SPEED);
+  };
+
+  /**
+   * GPS speed fallback from position deltas
+   */
+  const calculateSpeedFallback = (newLoc: Location.LocationObject, effMaxAcc: number): number => {
     if (!prevLocation.current || prevTimestamp.current === 0) return 0;
 
     const timeDiff = (newLoc.timestamp - prevTimestamp.current) / 1000;
@@ -74,7 +157,7 @@ export const useTracking = () => {
 
     const acc1 = newLoc.coords.accuracy ?? 999;
     const acc2 = prevLocation.current.coords.accuracy ?? 999;
-    if (acc1 > MAX_ACCURACY || acc2 > MAX_ACCURACY) return 0;
+    if (acc1 > effMaxAcc || acc2 > effMaxAcc) return 0;
 
     const dist = calculateDistance(
       prevLocation.current.coords.latitude,
@@ -83,36 +166,78 @@ export const useTracking = () => {
       newLoc.coords.longitude
     ); // meters
 
-    // ถ้าระยะยังอยู่ในขอบความคลาดเคลื่อนรวม → ถือว่า 0
-    if (dist <= (acc1 + acc2) * DRIFT_FACTOR) return 0;
+    const driftFactor = effMaxAcc > BASE_MAX_ACCURACY ? INDOOR_DRIFT_FACTOR : BASE_DRIFT_FACTOR;
+    if (dist <= (acc1 + acc2) * driftFactor) return 0;
 
     const speedKmh = (dist / timeDiff) * 3.6;
     return Math.min(speedKmh, MAX_SPEED);
   };
 
-  // อัปเดตสถานะหยุดนิ่ง/เคลื่อนที่ตามหน้าต่างเล็กๆ
+  /**
+   * Stationary flag update on each sample
+   */
   const updateStationaryFlag = (deltaMeters: number, currentSpeedKmh: number) => {
-    // เก็บประวัติ displacement (m) และ speed (km/h)
     moveHistory.current = [...moveHistory.current.slice(-STATIONARY_WINDOW + 1), Math.max(0, deltaMeters)];
-    speedHistoryWindow.current = [...speedHistoryWindow.current.slice(-STATIONARY_WINDOW + 1), Math.max(0, currentSpeedKmh || 0)];
+    speedHistoryWindow.current = [
+      ...speedHistoryWindow.current.slice(-STATIONARY_WINDOW + 1),
+      Math.max(0, currentSpeedKmh || 0),
+    ];
 
     const movedSum = moveHistory.current.reduce((a, b) => a + b, 0);
-    const avgSpd = speedHistoryWindow.current.length
-      ? speedHistoryWindow.current.reduce((a, b) => a + b, 0) / speedHistoryWindow.current.length
-      : 0;
+    const avgSpd =
+      speedHistoryWindow.current.length
+        ? speedHistoryWindow.current.reduce((a, b) => a + b, 0) / speedHistoryWindow.current.length
+        : 0;
 
-    // ถ้าเคลื่อนที่รวมน้อยมาก + ความเร็วเฉลี่ยต่ำ → หยุดนิ่ง
-    isStationaryRef.current = (movedSum < STATIONARY_MOVE_SUM) && (avgSpd < STATIONARY_SPEED_KMH);
+    isStationaryRef.current = movedSum < STATIONARY_MOVE_SUM && avgSpd < STATIONARY_SPEED_KMH;
   };
 
-  // Handle new GPS update
+  /**
+   * Core GPS handler — blends GPS + step fallback and **decays speed to zero**
+   */
   const handleLocationUpdate = (newLoc: Location.LocationObject) => {
+    const now = Date.now();
     const acc = newLoc.coords.accuracy ?? 999;
-    if (acc > MAX_ACCURACY) {
-      // ข้ามอัปเดตที่ accuracy แย่
+
+    // Recent step gains inside the rolling window
+    const recentStepGain = stepWindowRef.current.reduce((a, b) => a + b.steps, 0);
+    const likelyIndoor = isLikelyIndoor(acc, recentStepGain);
+
+    // Choose thresholds per mode
+    const effMaxAcc = likelyIndoor ? INDOOR_MAX_ACCURACY : BASE_MAX_ACCURACY;
+    const effMinMove = likelyIndoor ? INDOOR_MIN_MOVE_METERS : BASE_MIN_MOVE_METERS;
+    const effDriftFactor = likelyIndoor ? INDOOR_DRIFT_FACTOR : BASE_DRIFT_FACTOR;
+
+    // If accuracy is too poor (even for indoor), rely on steps only
+    if (acc > effMaxAcc) {
+      const spdFromSteps = speedFromStepsKmh();
+
+      // If steps moved, add distance from steps
+      if (spdFromSteps > 0 && recentStepGain > 0) {
+        lastMovementAtRef.current = now;
+
+        requestAnimationFrame(() => {
+          setSpeed(Number(spdFromSteps.toFixed(1)));
+          setDistance((prevKm) => prevKm + (recentStepGain * STRIDE_M) / 1000);
+          setUpdateCount((p) => p + 1);
+        });
+
+        // Clear step window to avoid double counting
+        stepWindowRef.current.length = 0;
+      } else {
+        // No valid movement => decay speed to zero
+        requestAnimationFrame(() => {
+          setSpeed(0);
+          setUpdateCount((p) => p + 1);
+        });
+      }
+
+      prevLocation.current = newLoc;
+      prevTimestamp.current = newLoc.timestamp;
       return;
     }
 
+    // ===== GPS displacement =====
     let deltaMeters = 0;
 
     if (prevLocation.current) {
@@ -123,46 +248,75 @@ export const useTracking = () => {
         newLoc.coords.longitude
       ); // meters
 
-      // เกณฑ์ขั้นต่ำ: max(ฐาน, (acc_prev + acc_now) * DRIFT_FACTOR)
       const accPrev = prevLocation.current.coords.accuracy ?? 999;
-      const minMove =
-        Math.max(MIN_MOVE_METERS_BASE, (accPrev + acc) * DRIFT_FACTOR);
+      const minMove = Math.max(effMinMove, (accPrev + acc) * effDriftFactor);
 
-      // ถ้าระยะมากกว่าเกณฑ์ → ถือว่าขยับจริง
       if (dist > minMove) {
         deltaMeters = dist;
       }
     }
 
-    // ใช้ GPS speed ถ้ามี ไม่งั้น fallback
+    // ===== Speed from GPS or steps fallback =====
     const gpsSpeedMs = newLoc.coords.speed;
-    let spdKmh = (typeof gpsSpeedMs === 'number' && gpsSpeedMs > 0)
-      ? gpsSpeedMs * 3.6
-      : calculateSpeedFallback(newLoc);
+    let spdKmh =
+      typeof gpsSpeedMs === 'number' && gpsSpeedMs > 0
+        ? gpsSpeedMs * 3.6
+        : calculateSpeedFallback(newLoc, effMaxAcc);
 
-    // อัปเดต stationary flag ด้วยข้อมูลรอบนี้
-    updateStationaryFlag(deltaMeters, spdKmh);
-
-    // ถ้าถูกจัดว่า "หยุดนิ่ง" → เคลียร์ความเร็วเป็น 0 และไม่บวกระยะ
-    if (isStationaryRef.current) {
-      deltaMeters = 0;
-      spdKmh = 0;
+    if (!spdKmh || spdKmh <= 0) {
+      const spdFromSteps = speedFromStepsKmh();
+      if (spdFromSteps > 0) spdKmh = spdFromSteps;
     }
 
-    // Smooth ความเร็ว (เฉลี่ยค่าที่ > 0)
-    speedHistory.current = [...speedHistory.current.slice(-HISTORY_SIZE + 1), Math.max(0, spdKmh || 0)];
-    const validSpeeds = speedHistory.current.filter((s) => s > 0);
-    const avgSpeed = validSpeeds.length
-      ? validSpeeds.reduce((a, b) => a + b, 0) / validSpeeds.length
-      : 0;
+    // Update stationary state
+    updateStationaryFlag(deltaMeters, spdKmh);
 
-    // อัปเดต state แบบ batch
+    // Movement watchdog: mark last movement when we see convincing movement
+    if (deltaMeters > 0 || (spdKmh && spdKmh > STATIONARY_SPEED_KMH) || recentStepGain > 0) {
+      lastMovementAtRef.current = now;
+    }
+
+    // If declared stationary, prefer zero unless steps indicate otherwise
+    if (isStationaryRef.current) {
+      const spdFromSteps = speedFromStepsKmh();
+      if (spdFromSteps <= STATIONARY_SPEED_KMH) {
+        deltaMeters = 0;
+        spdKmh = 0;
+      } else {
+        spdKmh = spdFromSteps;
+      }
+    }
+
+    // ===== Smooth speed — include zeros so it can drop! =====
+    const currentSpd = Math.max(0, spdKmh || 0);
+    speedHistory.current = [...speedHistory.current.slice(-HISTORY_SIZE + 1), currentSpd];
+    const avgSpeed =
+      speedHistory.current.reduce((a, b) => a + b, 0) / speedHistory.current.length;
+
+    // ===== Batch state update with zero-decay =====
     requestAnimationFrame(() => {
+      let smoothed = Number(avgSpeed.toFixed(1));
+
+      // If no movement seen recently, force speed to zero and clear history
+      if (!lastMovementAtRef.current || now - lastMovementAtRef.current > NO_MOVE_TIMEOUT_MS) {
+        smoothed = 0;
+        speedHistory.current = [];
+      }
+
       setLocation(newLoc);
-      setSpeed(Number(avgSpeed.toFixed(1)));
+      setSpeed(smoothed);
+
+      // Distance from GPS
       if (deltaMeters > 0) {
         setDistance((prevKm) => prevKm + deltaMeters / 1000);
       }
+
+      // If GPS didn't move but steps did => add step distance and clear window
+      if (deltaMeters === 0 && recentStepGain > 0) {
+        setDistance((prevKm) => prevKm + (recentStepGain * STRIDE_M) / 1000);
+        stepWindowRef.current.length = 0;
+      }
+
       setUpdateCount((p) => p + 1);
     });
 
@@ -170,32 +324,42 @@ export const useTracking = () => {
     prevTimestamp.current = newLoc.timestamp;
   };
 
-  // Start tracking
+  /**
+   * Start tracking
+   */
   const startTracking = async () => {
     try {
+      // reset states/buffers
       setDistance(0);
       setTime(0);
       setSteps(0);
       setUpdateCount(0);
       setSpeed(0);
+      setLocation(null);
+
       speedHistory.current = [];
       moveHistory.current = [];
       speedHistoryWindow.current = [];
       isStationaryRef.current = false;
+
       prevLocation.current = null;
       prevTimestamp.current = 0;
 
+      prevStepsRef.current = 0;
+      stepWindowRef.current = [];
+
+      lastMovementAtRef.current = 0;
+
+      // Permissions
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return;
 
+      // Watch position
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.Highest,
-          // เพิ่ม distanceInterval เพื่อไม่สาดอัปเดตถี่เกินตอนหยุดนิ่ง
-          // 1–5 m แล้วแต่ยูสเคส ลองเริ่มที่ 3m
-          distanceInterval: 3,
-          // เวลาไม่จำเป็นต้องบังคับถี่ ถ้ามี distanceInterval แล้ว
-          timeInterval: 1000,
+          distanceInterval: 2,       // indoor 1–3m, outdoor 3–10m
+          timeInterval: 1000,        // 1s updates
           mayShowUserSettingsDialog: true,
         },
         handleLocationUpdate
@@ -208,7 +372,9 @@ export const useTracking = () => {
     }
   };
 
-  // Stop tracking
+  /**
+   * Stop tracking
+   */
   const stopTracking = () => {
     subscription?.remove();
     pedometerSubscription.current?.remove();
@@ -216,10 +382,19 @@ export const useTracking = () => {
     setSpeed(0);
     setUpdateCount(0);
     setLocation(null);
+
     speedHistory.current = [];
     moveHistory.current = [];
     speedHistoryWindow.current = [];
     isStationaryRef.current = false;
+
+    prevLocation.current = null;
+    prevTimestamp.current = 0;
+
+    prevStepsRef.current = 0;
+    stepWindowRef.current = [];
+
+    lastMovementAtRef.current = 0;
   };
 
   return {

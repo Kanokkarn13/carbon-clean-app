@@ -35,7 +35,7 @@ export type Activity = {
   distance_km?: number;
   step_total?: number;
   duration_sec?: number;
-  record_date?: string | Date;
+  record_date?: string | Date | number; // supports ISO, 'YYYY-MM-DD HH:mm:ss', ms/sec timestamp
   id?: string | number;
 };
 
@@ -66,7 +66,7 @@ function toActivityType(input: unknown): ActivityType {
 }
 
 /**
- * รองรับหลายชื่อคีย์จาก DB ทั้งเดิน/ปั่น + ใส่ fallback อัตโนมัติ
+ * Normalize activity payload from various backends.
  */
 function normalizeActivities(raw: any): Activity[] {
   const arr =
@@ -148,6 +148,60 @@ function normalizeActivities(raw: any): Activity[] {
   });
 }
 
+/** -------- Helpers for distance & time display -------- */
+function formatDistance(kmInput?: number) {
+  const km = Number(kmInput ?? 0);
+  const wholeKm = Math.floor(km);
+  let meters = Math.round((km - wholeKm) * 1000);
+
+  // Handle rounding up like 0.9996 km -> 1.000 km (avoid "1000 m")
+  if (meters === 1000) {
+    return `${wholeKm + 1} km`;
+  }
+  if (wholeKm <= 0) return `${meters} m`;
+  if (meters <= 0) return `${wholeKm} km`;
+  return `${wholeKm} km ${meters} m`;
+}
+
+function parseRecordDate(input: any): Date | undefined {
+  if (!input) return undefined;
+  if (input instanceof Date) return input;
+
+  if (typeof input === 'number') {
+    // Support ms or sec timestamps (heuristic)
+    if (input < 1e11) return new Date(input * 1000);
+    return new Date(input);
+  }
+
+  if (typeof input === 'string') {
+    const s = input.trim();
+    // MySQL 'YYYY-MM-DD HH:mm:ss'
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) {
+      return new Date(s.replace(' ', 'T'));
+    }
+    // ISO and other common forms
+    return new Date(s);
+  }
+  return undefined;
+}
+
+function formatWhen(record_date: any): string {
+  const d = parseRecordDate(record_date);
+  if (!d || isNaN(d.getTime())) return '—';
+
+  const now = new Date();
+  const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+
+  if (diffSec < 60) return 'just now';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} minutes ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} hours ago`;
+  if (diffSec < 7 * 86400) return `${Math.floor(diffSec / 86400)} days ago`;
+
+  // > 1 week: show date (adjust locale/format as needed)
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+/** ----------------------------------------------------- */
+
 const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const route = useRoute<any>();
   const routeUser = route?.params?.user as HomeUser | undefined;
@@ -157,7 +211,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const [loading, setLoading] = useState(false);
   const isFocused = useIsFocused();
 
-  // รองรับทั้ง user_id และ id
+  // Accept user_id or id
   function getUserId(u?: { user_id?: string | number; id?: string | number }) {
     if (!u) return undefined;
     return (u.user_id ?? u.id) != null ? String(u.user_id ?? u.id) : undefined;
@@ -400,7 +454,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
                       {activity.title || activity.type}
                     </Text>
                     <Text style={styles.recentSub}>
-                      {Number(activity.distance_km || 0)} km
+                      {formatDistance(activity.distance_km)} · {formatWhen(activity.record_date)}
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={theme.border} />
