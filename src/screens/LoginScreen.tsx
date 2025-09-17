@@ -6,17 +6,24 @@ import {
   TouchableOpacity,
   Alert,
   StyleSheet,
-  SafeAreaView,
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { login } from '../services/authService';
 
 type LoginScreenProps = {
   navigation: any;
   route: any;
   onLoginSuccess: (user: any) => void;
+};
+
+type AuthResponse = {
+  success?: boolean;
+  message?: string;
+  data?: any;    // <- backend ส่ง user กลับมาใน data
+  user?: any;    // เผื่อบาง env ส่งเป็น user
 };
 
 const theme = {
@@ -30,7 +37,7 @@ const theme = {
   danger: '#EF4444',
 };
 
-const LoginScreen = ({ navigation, onLoginSuccess }: LoginScreenProps) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ navigation, onLoginSuccess }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [secure, setSecure] = useState(true);
@@ -50,12 +57,28 @@ const LoginScreen = ({ navigation, onLoginSuccess }: LoginScreenProps) => {
     if (!validate()) return;
     setLoading(true);
     try {
-      const data = await login(username.trim(), password);
-      Alert.alert('Welcome', `${data.data.fname} ${data.data.lname}`);
-      onLoginSuccess(data.data);
+      const res: AuthResponse = await login(username.trim(), password);
+
+      // ✅ รองรับทั้ง res.user และ res.data
+      const apiUser = res.user ?? res.data;
+      if (!apiUser) {
+        throw new Error(res.message || 'Malformed login response');
+      }
+
+      const fullName =
+        (apiUser.fname || apiUser.lname)
+          ? `${apiUser.fname ?? ''} ${apiUser.lname ?? ''}`.trim()
+          : 'Welcome';
+
+      Alert.alert('Welcome', fullName);
+
+      // ✅ สร้าง state user ใน _layout ผ่าน callback
+      onLoginSuccess(apiUser);
+
+      // ✅ ไปหน้าหลัก (ไม่ต้องส่ง params เพราะ _layout ส่ง state ลง MainTabs ให้แล้ว)
       navigation.replace('Main');
-    } catch (error: any) {
-      const msg = error?.response?.data?.message || 'Invalid credentials';
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Invalid credentials';
       setErr(msg);
       Alert.alert('Login Failed', msg);
     } finally {
@@ -109,7 +132,7 @@ const LoginScreen = ({ navigation, onLoginSuccess }: LoginScreenProps) => {
               />
               <TouchableOpacity
                 style={styles.suffixBtn}
-                onPress={() => setSecure(s => !s)}
+                onPress={() => setSecure((s) => !s)}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
                 <Text style={styles.suffixText}>
@@ -118,11 +141,8 @@ const LoginScreen = ({ navigation, onLoginSuccess }: LoginScreenProps) => {
               </TouchableOpacity>
             </View>
 
-            {/* Forgot password */}
             <TouchableOpacity
-              onPress={() =>
-                Alert.alert('Reset Password', 'Password reset flow goes here.')
-              }
+              onPress={() => Alert.alert('Reset Password', 'Password reset flow goes here.')}
               style={{ marginTop: 12, alignSelf: 'flex-end' }}
             >
               <Text style={styles.forgot}>Forgot password?</Text>
@@ -159,65 +179,25 @@ const LoginScreen = ({ navigation, onLoginSuccess }: LoginScreenProps) => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-    flex: 1,
-    justifyContent: 'center',
-  },
+  container: { paddingHorizontal: 20, paddingBottom: 40, flex: 1, justifyContent: 'center' },
   header: { marginBottom: 12, alignItems: 'center' },
   title: { fontSize: 28, fontWeight: '800', color: theme.text },
   subtitle: { color: theme.sub, marginTop: 6, textAlign: 'center' },
   card: {
-    backgroundColor: theme.card,
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    backgroundColor: theme.card, borderRadius: 16, padding: 16,
+    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 }, elevation: 3,
   },
   label: { color: theme.sub, fontSize: 13, marginBottom: 6 },
-  inputWrap: {
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 12,
-    backgroundColor: '#FFF',
-    position: 'relative',
-  },
-  input: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    fontSize: 16,
-    color: theme.text,
-  },
-  suffixBtn: {
-    position: 'absolute',
-    right: 8,
-    top: 8,
-    bottom: 8,
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
-  },
+  inputWrap: { borderWidth: 1, borderColor: theme.border, borderRadius: 12, backgroundColor: '#FFF', position: 'relative' },
+  input: { paddingVertical: 12, paddingHorizontal: 14, fontSize: 16, color: theme.text },
+  suffixBtn: { position: 'absolute', right: 8, top: 8, bottom: 8, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#F3F4F6' },
   suffixText: { color: theme.sub, fontWeight: '700', fontSize: 12 },
   forgot: { color: theme.primaryDark, fontWeight: '700' },
   error: { color: theme.danger, marginTop: 10, fontWeight: '600' },
-  primaryBtn: {
-    marginTop: 16,
-    backgroundColor: theme.primary,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
+  primaryBtn: { marginTop: 16, backgroundColor: theme.primary, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   primaryBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
-  footerRow: {
-    marginTop: 14,
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
+  footerRow: { marginTop: 14, flexDirection: 'row', justifyContent: 'center' },
 });
 
 export default LoginScreen;

@@ -1,3 +1,4 @@
+// src/screens/Home.tsx
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -11,7 +12,41 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useIsFocused } from '@react-navigation/native';
+import { useIsFocused, useRoute } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList, User as StackUser } from './HomeStack';
+
+// ---------- Types ----------
+type HomeNav = NativeStackNavigationProp<RootStackParamList, any>;
+
+type HomeUser = StackUser & {
+  user_id?: string | number;
+  fname?: string;
+  lname?: string;
+  profile_picture?: string;
+};
+
+type ActivityType = 'Cycling' | 'Walking';
+
+export type Activity = {
+  type: ActivityType;
+  title?: string;
+  description?: string;
+  distance_km?: number;
+  step_total?: number;
+  duration_sec?: number;
+  record_date?: string | Date;
+  id?: string | number;
+};
+
+type Props = {
+  navigation: HomeNav;
+  user?: HomeUser; // may be undefined if not passed as prop
+};
+// ---------------------------
+
+// .env (recommended): EXPO_PUBLIC_API_URL=http://192.168.0.100:3000
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.100:3000';
 
 const theme = {
   primary: '#10B981',
@@ -24,32 +59,202 @@ const theme = {
   chip: '#ECFDF5',
 };
 
-const HomeScreen = ({ user, navigation }) => {
-  const [activities, setActivities] = useState<any[]>([]);
+function toActivityType(input: unknown): ActivityType {
+  const t = String(input ?? '').toLowerCase();
+  if (t.includes('cycl')) return 'Cycling';
+  return 'Walking';
+}
+
+/**
+ * รองรับหลายชื่อคีย์จาก DB ทั้งเดิน/ปั่น + ใส่ fallback อัตโนมัติ
+ */
+function normalizeActivities(raw: any): Activity[] {
+  const arr =
+    (Array.isArray(raw) && raw) ||
+    (Array.isArray(raw?.activities) && raw.activities) ||
+    (Array.isArray(raw?.data) && raw.data) ||
+    (Array.isArray(raw?.results) && raw.results) ||
+    (Array.isArray(raw?.items) && raw.items) ||
+    [];
+
+  return arr.map((r: any): Activity => {
+    const type = toActivityType(r?.type ?? r?.activity_type);
+
+    // distance -> km
+    let distance_km = 0;
+    if (r?.distance_km != null) distance_km = Number(r.distance_km);
+    else if (r?.distance != null)
+      distance_km =
+        Number(r.distance) > 1000 ? Number(r.distance) / 1000 : Number(r.distance);
+    else if (r?.meters != null) distance_km = Number(r.meters) / 1000;
+    else if (r?.km != null) distance_km = Number(r.km);
+    else if (r?.miles != null) distance_km = Number(r.miles) * 1.60934;
+
+    // steps
+    const step_total =
+      r?.step_total != null
+        ? Number(r.step_total)
+        : r?.steps != null
+        ? Number(r.steps)
+        : r?.step_count != null
+        ? Number(r.step_count)
+        : r?.stepCount != null
+        ? Number(r.stepCount)
+        : undefined;
+
+    // duration (sec)
+    let duration_sec: number | undefined;
+    if (r?.duration_sec != null) duration_sec = Number(r.duration_sec);
+    else if (r?.duration_ms != null) duration_sec = Number(r.duration_ms) / 1000;
+    else if (r?.milliseconds != null) duration_sec = Number(r.milliseconds) / 1000;
+    else if (r?.minutes != null) duration_sec = Number(r.minutes) * 60;
+    else if (r?.duration != null) {
+      if (typeof r.duration === 'string' && r.duration.includes(':')) {
+        const [h = '0', m = '0', s = '0'] = r.duration.split(':');
+        duration_sec = +h * 3600 + +m * 60 + +s;
+      } else {
+        duration_sec = Number(r.duration);
+      }
+    }
+
+    const record_date =
+      r?.record_date ?? r?.date ?? r?.recorded_at ?? r?.start_time;
+
+    const title =
+      r?.title ??
+      r?.name ??
+      r?.activity_name ??
+      r?.workout_name ??
+      `${type}${distance_km ? ` ${distance_km.toFixed(2)} km` : ''}`;
+
+    const description =
+      r?.description ??
+      r?.desciption ??
+      r?.note ??
+      r?.remarks ??
+      r?.detail ??
+      undefined;
+
+    return {
+      type,
+      title,
+      description,
+      distance_km: Number(distance_km ?? 0) || 0,
+      step_total,
+      duration_sec,
+      record_date,
+      id: r?.id ?? r?._id,
+    };
+  });
+}
+
+const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
+  const route = useRoute<any>();
+  const routeUser = route?.params?.user as HomeUser | undefined;
+  const user = userProp ?? routeUser;
+
+  const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(false);
   const isFocused = useIsFocused();
 
+  // รองรับทั้ง user_id และ id
+  function getUserId(u?: { user_id?: string | number; id?: string | number }) {
+    if (!u) return undefined;
+    return (u.user_id ?? u.id) != null ? String(u.user_id ?? u.id) : undefined;
+  }
+
   useEffect(() => {
     const fetchActivities = async () => {
-      if (!user?.user_id || !isFocused) return;
+      const uid = getUserId(user);
+      console.log('[Home] effective user =', user);
+      console.log('[Home] isFocused =', isFocused, '| uid =', uid);
+
+      if (!uid) {
+        console.log('[Home] skip: no user id');
+        setActivities([]);
+        return;
+      }
+      if (!isFocused) {
+        console.log('[Home] skip: not focused');
+        return;
+      }
+
       setLoading(true);
+
+      const tryUrls = [
+        `${BASE_URL}/api/recent-activity/full/${encodeURIComponent(uid)}`,
+        `${BASE_URL}/api/recent-activity/${encodeURIComponent(uid)}`,
+      ];
+      const urlPost = `${BASE_URL}/api/recent-activity`;
+
       try {
-        const url = `http://192.168.0.102:3000/api/recent-activity/${user.user_id}`;
-        const res = await fetch(url);
-        const data = await res.json();
-        setActivities(Array.isArray(data.activities) ? data.activities.slice(0, 10) : []);
-      } catch {
+        let data: any | undefined;
+
+        for (const url of tryUrls) {
+          console.log('[RecentActivity] TRY', url);
+          try {
+            const res = await fetch(url);
+            console.log('[RecentActivity] status', res.status, 'for', url);
+            if (!res.ok) continue;
+            const j = await res.json();
+            const arr =
+              (Array.isArray(j) && j) ||
+              (Array.isArray(j?.activities) && j.activities) ||
+              (Array.isArray(j?.data) && j.data) ||
+              (Array.isArray(j?.results) && j.results) ||
+              (Array.isArray(j?.items) && j.items) ||
+              [];
+            console.log('[RecentActivity] array length from', url, '=', arr.length);
+            data = j;
+            break;
+          } catch (e) {
+            console.log('[RecentActivity] try failed', url, e);
+          }
+        }
+
+        if (!data) {
+          console.log('[RecentActivity] fallback POST', urlPost);
+          const resPost = await fetch(urlPost, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: uid }),
+          });
+          console.log('[RecentActivity] POST status', resPost.status);
+          if (resPost.ok) data = await resPost.json();
+        }
+
+        if (!data) {
+          console.log('[RecentActivity] no data from any endpoint');
+          setActivities([]);
+          return;
+        }
+
+        console.log('[RecentActivity] payload', data);
+        const list = normalizeActivities(data);
+        if (__DEV__ && list[0]) console.log('[RecentActivity] normalized sample:', list[0]);
+        console.log('[RecentActivity] final length =', list.length);
+        setActivities(list.slice(0, 10));
+      } catch (e) {
+        console.warn('[RecentActivity] fetch error:', e);
         setActivities([]);
       } finally {
         setLoading(false);
       }
     };
+
     fetchActivities();
-  }, [user, isFocused]);
+  }, [isFocused, user?.user_id, user?.id]);
 
   const handleActivityPress = () => navigation.navigate('Calculation');
 
-  const fullName = user ? `${user.fname} ${user.lname}` : 'Guest';
+  const fullName =
+    user?.fname || user?.lname
+      ? `${user?.fname ?? ''} ${user?.lname ?? ''}`.trim()
+      : 'Guest';
+
+  const goToRecentAct = (activity: Activity) => {
+    (navigation as any).navigate('RecentAct', { activity });
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -58,7 +263,11 @@ const HomeScreen = ({ user, navigation }) => {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <Image
-              source={{ uri: user?.profile_picture || 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }}
+              source={{
+                uri:
+                  user?.profile_picture ||
+                  'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+              }}
               style={styles.avatar}
             />
             <View>
@@ -174,27 +383,41 @@ const HomeScreen = ({ user, navigation }) => {
             </View>
           ) : (
             activities.map((activity, idx) => {
-              const icon =
-                activity.type === 'Cycling'
-                  ? 'bicycle-outline'
-                  : activity.type === 'Running'
-                  ? 'run-outline'
-                  : 'walk-outline';
+              const iconName =
+                activity.type === 'Cycling' ? 'bicycle-outline' : 'walk-outline';
               return (
-                <View key={`${activity.type}-${idx}`} style={styles.recentItem}>
+                <TouchableOpacity
+                  key={`${activity.type}-${activity.id ?? idx}-${activity.record_date ?? idx}`}
+                  style={styles.recentItem}
+                  activeOpacity={0.9}
+                  onPress={() => goToRecentAct(activity)}
+                >
                   <View style={styles.recentIcon}>
-                    <Ionicons name={icon as any} size={18} color={theme.primaryDark} />
+                    <Ionicons name={iconName as any} size={18} color={theme.primaryDark} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.recentTitle}>{activity.type}</Text>
-                    <Text style={styles.recentSub}>{Number(activity.distance_km || 0)} km</Text>
+                    <Text style={styles.recentTitle}>
+                      {activity.title || activity.type}
+                    </Text>
+                    <Text style={styles.recentSub}>
+                      {Number(activity.distance_km || 0)} km
+                    </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={theme.border} />
-                </View>
+                </TouchableOpacity>
               );
             })
           )}
         </View>
+
+        {/* (Optional) Debug info – comment out in prod */}
+        {__DEV__ && (
+          <View style={{ marginTop: 12, alignItems: 'center' }}>
+            <Text style={{ color: theme.sub, fontSize: 12 }}>
+              user_id: {user?.user_id ?? '—'} | focused: {String(isFocused)} | API: {BASE_URL}
+            </Text>
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -202,11 +425,7 @@ const HomeScreen = ({ user, navigation }) => {
 
 const styles = StyleSheet.create({
   container: { padding: 20, paddingBottom: 44 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#fff' },
   greeting: { fontSize: 12, color: theme.sub },
@@ -245,11 +464,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     overflow: 'hidden',
   },
-  progressBarFill: {
-    height: 8,
-    backgroundColor: theme.primary,
-    borderRadius: 999,
-  },
+  progressBarFill: { height: 8, backgroundColor: theme.primary, borderRadius: 999 },
   pillBtn: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
@@ -347,4 +562,4 @@ const styles = StyleSheet.create({
   recentSub: { color: theme.sub, marginTop: 2 },
 });
 
-export default HomeScreen;
+export default Home;

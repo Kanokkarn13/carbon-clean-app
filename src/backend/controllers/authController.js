@@ -61,7 +61,7 @@ exports.login = async (req, res) => {
   }
 };
 
-// 📌 REGISTER (fname fixed)
+// 📌 REGISTER 
 exports.register = async (req, res) => {
   const { fname, lname, email, password, phone } = req.body;
 

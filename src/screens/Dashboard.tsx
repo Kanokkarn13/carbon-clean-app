@@ -28,10 +28,21 @@ const theme = {
 
 type Period = 'week' | 'month' | 'year';
 
-function startOfDay(d: Date) {
-  const x = new Date(d); x.setHours(0,0,0,0); return x;
+const isValidDate = (d: any) => d instanceof Date && !Number.isNaN(d.getTime());
+const safeDate = (v: any) => {
+  const d = new Date(v);
+  return isValidDate(d) ? d : null;
+};
+function startOfDay(d?: Date | null) {
+  if (!d || !isValidDate(d)) return null;
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
 }
-function iso(d: Date) { return startOfDay(d).toISOString().slice(0,10); }
+function iso(d?: Date | null) {
+  const s = startOfDay(d);
+  return s ? s.toISOString().slice(0, 10) : '';
+}
 
 export default function Dashboard() {
   const route = useRoute();
@@ -52,9 +63,29 @@ export default function Dashboard() {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`http://192.168.0.102:3000/api/recent-activity/${user.user_id}`);
+        const res = await fetch(`http://192.168.0.100:3000/api/recent-activity/${user.user_id}`);
         const json = await res.json();
-        setActivities(Array.isArray(json.activities) ? json.activities : []);
+        const arr = Array.isArray(json.activities) ? json.activities : [];
+
+        // ✅ นอร์มัลไลซ์: ใช้ record_date เสมอ, กัน distance เป็นสตริง/NaN
+        const normalized = arr.map((a: any) => {
+          const rdRaw = a.record_date ?? a.created_at ?? null; // เผื่อ API รุ่นเก่า
+          const d = safeDate(rdRaw);
+          return {
+            ...a,
+            record_date: d ? d.toISOString() : null,
+            distance_km:
+              typeof a.distance_km === 'number'
+                ? a.distance_km
+                : Number(a.distance_km) || 0,
+            type: a.type || 'Activity',
+            title:
+              (a.title && String(a.title).trim()) ||
+              `${a.type || 'Activity'} on ${d ? d.toISOString().slice(0, 10) : 'Unknown'}`,
+          };
+        });
+
+        setActivities(normalized);
       } catch (e) {
         setActivities([]);
       } finally {
@@ -63,110 +94,109 @@ export default function Dashboard() {
     })();
   }, [user]);
 
-const { labels, wData, cData } = useMemo(() => {
-  const now = new Date();
-  let rangeLabels: string[] = [];
-  let dateKeys: string[] = [];
+  const { labels, wData, cData } = useMemo(() => {
+    const now = new Date();
+    let rangeLabels: string[] = [];
+    let dateKeys: string[] = [];
 
-  if (period === 'week') {
-    const base = startOfDay(now);
-    const day = (base.getDay() + 6) % 7; // Mon=0..Sun=6
-    base.setDate(base.getDate() - day + offset * 7);
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(base); d.setDate(base.getDate() + i);
-      rangeLabels.push(d.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2));
-      dateKeys.push(iso(d));
+    if (period === 'week') {
+      const base = startOfDay(now)!;
+      const day = (base.getDay() + 6) % 7; // Mon=0..Sun=6
+      base.setDate(base.getDate() - day + offset * 7);
+
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(base);
+        d.setDate(base.getDate() + i);
+        rangeLabels.push(d.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2));
+        dateKeys.push(iso(d));
+      }
+
+      // init daily buckets
+      const buckets: Record<string, { walking: number; cycling: number }> = {};
+      dateKeys.forEach((k) => (buckets[k] = { walking: 0, cycling: 0 }));
+
+      activities.forEach((a) => {
+        const d = safeDate(a.record_date);
+        const key = iso(d);
+        if (!key || !buckets[key]) return;
+        const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
+        if (a.type === 'Walking') buckets[key].walking += dist;
+        if (a.type === 'Cycling') buckets[key].cycling += dist;
+      });
+
+      return {
+        labels: rangeLabels,
+        wData: dateKeys.map((k) => buckets[k].walking),
+        cData: dateKeys.map((k) => buckets[k].cycling),
+      };
     }
 
-    // init daily buckets
-    const buckets: Record<string, { walking: number; cycling: number }> = {};
-    dateKeys.forEach(k => (buckets[k] = { walking: 0, cycling: 0 }));
+    if (period === 'month') {
+      // Aggregate เดือนเป็น bin รายสัปดาห์ (W1–W5)
+      const base = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      const daysInMonth = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+      const binCount = Math.ceil(daysInMonth / 7); // 4–5 bins
+      rangeLabels = Array.from({ length: binCount }, (_, i) => `W${i + 1}`);
 
-    activities.forEach(a => {
-      const key = iso(new Date(a.created_at));
-      if (!buckets[key]) return;
+      const weekBuckets = Array.from({ length: binCount }, () => ({ walking: 0, cycling: 0 }));
+
+      activities.forEach((a) => {
+        const d = safeDate(a.record_date);
+        if (!d) return;
+        const sameMonth = d.getFullYear() === base.getFullYear() && d.getMonth() === base.getMonth();
+        if (!sameMonth) return;
+
+        const day = d.getDate(); // 1..daysInMonth
+        const weekIdx = Math.min(Math.floor((day - 1) / 7), binCount - 1);
+        const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
+        if (a.type === 'Walking') weekBuckets[weekIdx].walking += dist;
+        if (a.type === 'Cycling') weekBuckets[weekIdx].cycling += dist;
+      });
+
+      return {
+        labels: rangeLabels,
+        wData: weekBuckets.map((b) => b.walking),
+        cData: weekBuckets.map((b) => b.cycling),
+      };
+    }
+
+    // year
+    const year = now.getFullYear() + offset;
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    rangeLabels = monthNames.slice();
+    const buckets: Record<number, { walking: number; cycling: number }> = {};
+    monthNames.forEach((_, i) => (buckets[i] = { walking: 0, cycling: 0 }));
+
+    activities.forEach((a) => {
+      const d = safeDate(a.record_date);
+      if (!d || d.getFullYear() !== year) return;
+      const m = d.getMonth();
       const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
-      if (a.type === 'Walking') buckets[key].walking += dist;
-      if (a.type === 'Cycling') buckets[key].cycling += dist;
+      if (a.type === 'Walking') buckets[m].walking += dist;
+      if (a.type === 'Cycling') buckets[m].cycling += dist;
     });
 
     return {
       labels: rangeLabels,
-      wData: dateKeys.map(k => buckets[k].walking),
-      cData: dateKeys.map(k => buckets[k].cycling),
+      wData: monthNames.map((_, i) => buckets[i].walking),
+      cData: monthNames.map((_, i) => buckets[i].cycling),
     };
-  }
-
-  if (period === 'month') {
-    // 👇 Aggregate a month into weekly bins (W1–W5)
-    const base = new Date(now.getFullYear(), now.getMonth() + offset, 1);
-    const daysInMonth = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
-    const binCount = Math.ceil(daysInMonth / 7); // 4–5 bins
-    rangeLabels = Array.from({ length: binCount }, (_, i) => `W${i + 1}`);
-
-    const weekBuckets = Array.from({ length: binCount }, () => ({ walking: 0, cycling: 0 }));
-
-    activities.forEach(a => {
-      const d = new Date(a.created_at);
-      const sameMonth = d.getFullYear() === base.getFullYear() && d.getMonth() === base.getMonth();
-      if (!sameMonth) return;
-
-      const day = d.getDate();                         // 1..daysInMonth
-      const weekIdx = Math.min(Math.floor((day - 1) / 7), binCount - 1);
-      const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
-      if (a.type === 'Walking') weekBuckets[weekIdx].walking += dist;
-      if (a.type === 'Cycling') weekBuckets[weekIdx].cycling += dist;
-    });
-
-    return {
-      labels: rangeLabels,
-      wData: weekBuckets.map(b => b.walking),
-      cData: weekBuckets.map(b => b.cycling),
-    };
-  }
-
-  // year
-  const year = now.getFullYear() + offset;
-  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  rangeLabels = monthNames.slice();
-  const buckets: Record<number, { walking: number; cycling: number }> = {};
-  monthNames.forEach((_, i) => (buckets[i] = { walking: 0, cycling: 0 }));
-
-  activities.forEach(a => {
-    const d = new Date(a.created_at);
-    if (d.getFullYear() !== year) return;
-    const m = d.getMonth();
-    const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
-    if (a.type === 'Walking') buckets[m].walking += dist;
-    if (a.type === 'Cycling') buckets[m].cycling += dist;
-  });
-
-  return {
-    labels: rangeLabels,
-    wData: monthNames.map((_, i) => buckets[i].walking),
-    cData: monthNames.map((_, i) => buckets[i].cycling),
-  };
-}, [activities, period, offset]);
+  }, [activities, period, offset]);
 
   // overall progress (not tied to selected range)
   useEffect(() => {
     const totalWalking = activities
-      .filter(a => a.type === 'Walking')
-      .reduce((s,a) => s + (Number.isFinite(a.distance_km) ? Math.max(0,a.distance_km) : 0), 0);
+      .filter((a) => a.type === 'Walking')
+      .reduce((s, a) => s + (Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0), 0);
     const totalCycling = activities
-      .filter(a => a.type === 'Cycling')
-      .reduce((s,a) => s + (Number.isFinite(a.distance_km) ? Math.max(0,a.distance_km) : 0), 0);
+      .filter((a) => a.type === 'Cycling')
+      .reduce((s, a) => s + (Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0), 0);
 
     const walkingPct = Math.min((totalWalking / (user.walk_goal || 100)) * 100, 100);
     const cyclingPct = Math.min((totalCycling / (user.bic_goal || 100)) * 100, 100);
     setWalkingProgress(walkingPct);
     setCyclingProgress(cyclingPct);
   }, [activities, user]);
-
-  const pieChartData = [
-    { name: 'Emission',  population: Math.max(0.1, emissionData),  color: '#9CA3AF', legendFontColor: '#6B7280', legendFontSize: 14 },
-    { name: 'Reduction', population: Math.max(0.1, reductionData), color: theme.primary, legendFontColor: '#6B7280', legendFontSize: 14 },
-  ];
 
   const chartConfig = {
     backgroundColor: '#ffffff',
@@ -183,10 +213,11 @@ const { labels, wData, cData } = useMemo(() => {
   const periodTitle = useMemo(() => {
     const now = new Date();
     if (period === 'week') {
-      const base = startOfDay(now);
+      const base = startOfDay(now)!;
       const day = (base.getDay() + 6) % 7;
       base.setDate(base.getDate() - day + offset * 7);
-      const end = new Date(base); end.setDate(base.getDate() + 6);
+      const end = new Date(base);
+      end.setDate(base.getDate() + 6);
       const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       return `${fmt(base)} – ${fmt(end)}`;
     }
@@ -204,7 +235,11 @@ const { labels, wData, cData } = useMemo(() => {
         <View style={styles.container}>
           {/* Header — centered title, no overlap */}
           <View style={styles.header}>
-            <TouchableOpacity style={styles.headerSide} onPress={() => navigation.goBack()} hitSlop={{top:8,bottom:8,left:8,right:8}}>
+            <TouchableOpacity
+              style={styles.headerSide}
+              onPress={() => (navigation as any).goBack()}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Ionicons name="arrow-back" size={22} color={theme.primary} />
             </TouchableOpacity>
             <Text style={styles.title}>Dashboard</Text>
@@ -215,23 +250,32 @@ const { labels, wData, cData } = useMemo(() => {
           <View style={styles.card}>
             <View style={styles.periodRow}>
               <View style={styles.segment}>
-                {(['week','month','year'] as Period[]).map(p => {
+                {(['week', 'month', 'year'] as Period[]).map((p) => {
                   const active = p === period;
                   return (
-                    <TouchableOpacity key={p} onPress={() => { setPeriod(p); setOffset(0); }} style={[styles.segBtn, active && styles.segBtnActive]}>
-                      <Text style={[styles.segText, active && styles.segTextActive]}>{p[0].toUpperCase()+p.slice(1)}</Text>
+                    <TouchableOpacity
+                      key={p}
+                      onPress={() => {
+                        setPeriod(p);
+                        setOffset(0);
+                      }}
+                      style={[styles.segBtn, active && styles.segBtnActive]}
+                    >
+                      <Text style={[styles.segText, active && styles.segTextActive]}>
+                        {p[0].toUpperCase() + p.slice(1)}
+                      </Text>
                     </TouchableOpacity>
                   );
                 })}
               </View>
               <View style={styles.navBtns}>
-                <TouchableOpacity onPress={() => setOffset(o => o-1)} style={styles.navBtn}>
+                <TouchableOpacity onPress={() => setOffset((o) => o - 1)} style={styles.navBtn}>
                   <Ionicons name="chevron-back" size={18} color={theme.primaryDark} />
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setOffset(0)} style={[styles.navBtn, {marginHorizontal:4}]}>
-                  <Text style={{color:theme.primaryDark,fontWeight:'700'}}>This</Text>
+                <TouchableOpacity onPress={() => setOffset(0)} style={[styles.navBtn, { marginHorizontal: 4 }]}>
+                  <Text style={{ color: theme.primaryDark, fontWeight: '700' }}>This</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setOffset(o => o+1)} style={styles.navBtn}>
+                <TouchableOpacity onPress={() => setOffset((o) => o + 1)} style={styles.navBtn}>
                   <Ionicons name="chevron-forward" size={18} color={theme.primaryDark} />
                 </TouchableOpacity>
               </View>
@@ -249,7 +293,7 @@ const { labels, wData, cData } = useMemo(() => {
                   labels,
                   datasets: [
                     { data: wData, color: (o = 1) => `rgba(16,185,129,${o})`, strokeWidth: 2 }, // Walking
-                    { data: cData, color: (o = 1) => `rgba(251,146,60,${o})`, strokeWidth: 2 },   // Cycling
+                    { data: cData, color: (o = 1) => `rgba(251,146,60,${o})`, strokeWidth: 2 }, // Cycling
                   ],
                   legend: ['Walking', 'Cycling'],
                 }}
@@ -285,7 +329,7 @@ const { labels, wData, cData } = useMemo(() => {
               ]}
               width={screenWidth - 32}
               height={230}
-              chartConfig={{ backgroundColor:'#fff', color:(o=1)=>`rgba(0,0,0,${o})`, labelColor:()=> '#000' }}
+              chartConfig={{ backgroundColor: '#fff', color: (o = 1) => `rgba(0,0,0,${o})`, labelColor: () => '#000' }}
               accessor="population"
               backgroundColor="transparent"
               paddingLeft="10"

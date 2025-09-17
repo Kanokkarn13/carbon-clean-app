@@ -1,5 +1,14 @@
 {
-  "compilerOptions": {},
   "extends": "expo/tsconfig.base",
-  "types": ["./src/types/env"]
+  "compilerOptions": {
+    "jsx": "react-jsx",                       // ให้ใช้ JSX ใน .tsx
+    "esModuleInterop": true,                  // แก้ default-import error
+    "allowSyntheticDefaultImports": true,     // ให้ import แบบ default ได้
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["react", "react-native", "node", "./src/types/env"]  // ← ย้าย types มาอยู่ใน compilerOptions
+  },
+  "include": ["src/**/*", "App.tsx", "index.ts", "index.tsx"],
+  "exclude": ["node_modules"]
 }

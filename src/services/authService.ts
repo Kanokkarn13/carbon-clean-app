@@ -1,82 +1,113 @@
-import axios from 'axios';
+// src/services/authService.ts
+import { Platform } from 'react-native';
 
-const BASE_URL = 'http://192.168.0.102:3000/api';  // change when use other device this is for android emulator
+/**
+ * ตั้งค่า BASE_URL
+ * - แนะนำให้ตั้งไฟล์ .env: EXPO_PUBLIC_API_URL=http://<YOUR_PC_IP>:3000
+ * - ถ้าไม่มี .env และอยู่ในโหมด dev:
+ *   - Android Emulator ➜ http://10.0.2.2:3000
+ *   - อื่น ๆ ➜ http://192.168.0.100:3000  (แก้ให้ตรง IP พีซีของคุณ)
+ * - โปรดแก้ 'https://your-prod-domain.com' สำหรับ production
+ */
+const getBaseUrl = () => {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl && envUrl.trim()) {
+    return envUrl.replace(/\/$/, ''); // ตัด / ท้าย
+  }
 
+  if (__DEV__) {
+    if (Platform.OS === 'android') {
+      // ใช้ได้เฉพาะ Android Emulator
+      return 'http://10.0.2.2:3000';
+    }
+    // iOS Simulator / อุปกรณ์จริงใน LAN เดียวกัน — แก้ IP ให้ตรงเครื่องคุณ
+    return 'http://192.168.0.100:3000';
+  }
 
-const request = async (endpoint: string, data: any) => {
-  const url = `${BASE_URL}${endpoint}`;
-  console.log('🌐 [REQUEST]', {
-    endpoint,
-    url,
+  return 'https://your-prod-domain.com';
+};
+
+const BASE_URL = getBaseUrl();
+
+/** Generic API request (POST by default) */
+async function request<TResp, TBody = unknown>(
+  endpoint: string,
+  body?: TBody,
+  init?: RequestInit
+): Promise<TResp> {
+  const url = `${BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+
+  const finalInit: RequestInit = {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: data,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    ...init,
+  };
+
+  // Log สำหรับดีบัก
+  console.log('🌐 [REQUEST]', {
+    method: finalInit.method,
+    url,
+    headers: finalInit.headers,
+    body,
   });
 
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    });
+    const res = await fetch(url, finalInit);
 
-    console.log('📥 [RESPONSE STATUS]', response.status);
-
-    const contentType = response.headers.get('Content-Type');
+    console.log('📥 [RESPONSE STATUS]', res.status);
+    const contentType = res.headers.get('Content-Type') || '';
     console.log('📥 [RESPONSE HEADERS]', contentType);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ [SERVER ERROR RESPONSE TEXT]', errorText);
-      throw new Error(`❌ Server responded with ${response.status}: ${errorText}`);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      console.error('❌ [SERVER ERROR RESPONSE TEXT]', errText);
+      throw new Error(`Server responded ${res.status}: ${errText}`);
     }
 
-    const json = await response.json();
+    // บาง endpoint อาจไม่คืน JSON
+    if (!contentType.toLowerCase().includes('application/json')) {
+      const text = await res.text();
+      // @ts-expect-error - ในกรณี API ไม่ใช่ JSON จริง ๆ
+      return text;
+    }
+
+    const json = (await res.json()) as TResp;
     console.log('✅ [PARSED JSON]', json);
     return json;
-
-  } catch (err) {
-    console.error('❌ [CATCH ERROR]', {
-      message: err.message,
-      error: err,
-    });
-    throw err;
+  } catch (err: unknown) {
+    const message =
+      err instanceof Error ? err.message : typeof err === 'string' ? err : 'Unknown error';
+    console.error('❌ [CATCH ERROR]', { message, error: err });
+    throw new Error(message);
   }
-};
+}
 
-export const updateUser = async (userData: any) => {
-  const API_URL = 'http://192.168.0.102:3000/api/update-user'; // change when use other device this is for android emulator only naka
-
-  try {
-    const response = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json', // ✅ ต้องตั้ง header
-      },
-      body: JSON.stringify(userData), // ✅ ต้อง stringify ทั้ง object
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to update user: ${errorText}`);
-    }
-
-    return await response.json();
-  } catch (err) {
-    console.error('❌ Failed to update user:', err);
-    throw err;
-  }
-};
-
-
-
+// ---------- Public APIs ----------
 
 // 🔐 Login API
 export const login = (email: string, password: string) =>
-  request('/check-user', { email, password });
+  request<{ token?: string; user?: any; message?: string }>('/api/check-user', {
+    email,
+    password,
+  });
 
 // 📝 Register API
-export const register = (name: string, lname: string, email: string, password: string, phone: string) =>
-  request('/register', { name, lname, email, password, phone });
+export const register = (
+  name: string,
+  lname: string,
+  email: string,
+  password: string,
+  phone: string
+) =>
+  request<{ user?: any; message?: string }>('/api/register', {
+    name,
+    lname,
+    email,
+    password,
+    phone,
+  });
+
+// 👤 Update user
+export const updateUser = (userData: Record<string, unknown>) =>
+  request<{ success: boolean; user?: any; message?: string }>('/api/update-user', userData);
