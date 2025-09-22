@@ -1,35 +1,51 @@
 // src/services/authService.ts
 import { Platform } from 'react-native';
 
-/**
- * ตั้งค่า BASE_URL
- * - แนะนำให้ตั้งไฟล์ .env: EXPO_PUBLIC_API_URL=http://<YOUR_PC_IP>:3000
- * - ถ้าไม่มี .env และอยู่ในโหมด dev:
- *   - Android Emulator ➜ http://10.0.2.2:3000
- *   - อื่น ๆ ➜ http://192.168.0.100:3000  (แก้ให้ตรง IP พีซีของคุณ)
- * - โปรดแก้ 'https://your-prod-domain.com' สำหรับ production
- */
+/* ========= Base URL ========= */
 const getBaseUrl = () => {
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
   if (envUrl && envUrl.trim()) {
-    return envUrl.replace(/\/$/, ''); // ตัด / ท้าย
+    return envUrl.replace(/\/+$/, ''); // strip trailing slashes
   }
-
   if (__DEV__) {
-    if (Platform.OS === 'android') {
-      // ใช้ได้เฉพาะ Android Emulator
-      return 'http://10.0.2.2:3000';
-    }
-    // iOS Simulator / อุปกรณ์จริงใน LAN เดียวกัน — แก้ IP ให้ตรงเครื่องคุณ
-    return 'http://192.168.0.100:3000';
+    if (Platform.OS === 'android') return 'http://10.0.2.2:3000'; // Android emulator -> host
+    return 'http://192.168.0.102:3000'; // iOS sim / device on LAN (adjust to your PC IP)
   }
-
   return 'https://your-prod-domain.com';
 };
 
 const BASE_URL = getBaseUrl();
+export const API_BASE = BASE_URL; // for debugging
 
-/** Generic API request (POST by default) */
+/* ========= Types ========= */
+export type ApiUser = {
+  user_id: number;
+  fname: string;
+  lname: string;
+  email: string;
+  phone: string;
+  vehicle?: string | null;
+  house_member?: number | null;
+  walk_goal?: number | null;
+  bic_goal?: number | null;
+  role?: string;
+};
+
+export type AuthResponse = {
+  success?: boolean;
+  message?: string;
+  data?: ApiUser | any; // your backend returns user in data
+  user?: ApiUser | any; // just in case another env returns user directly
+  token?: string;
+};
+
+export type BasicResponse<T = any> = {
+  success?: boolean;
+  message?: string;
+  data?: T;
+};
+
+/* ========= Core request helper ========= */
 async function request<TResp, TBody = unknown>(
   endpoint: string,
   body?: TBody,
@@ -38,13 +54,13 @@ async function request<TResp, TBody = unknown>(
   const url = `${BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
   const finalInit: RequestInit = {
-    method: 'POST',
+    method: init?.method ?? 'POST',
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     ...init,
   };
 
-  // Log สำหรับดีบัก
+  // Debug logs
   console.log('🌐 [REQUEST]', {
     method: finalInit.method,
     url,
@@ -59,22 +75,25 @@ async function request<TResp, TBody = unknown>(
     const contentType = res.headers.get('Content-Type') || '';
     console.log('📥 [RESPONSE HEADERS]', contentType);
 
+    const isJson = contentType.toLowerCase().includes('application/json');
+    const raw = isJson ? await res.json().catch(() => null) : await res.text().catch(() => '');
+
     if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.error('❌ [SERVER ERROR RESPONSE TEXT]', errText);
-      throw new Error(`Server responded ${res.status}: ${errText}`);
+      const serverMsg =
+        (raw && typeof raw === 'object' && (raw.message || raw.error)) ||
+        (typeof raw === 'string' && raw) ||
+        `HTTP ${res.status}`;
+      console.error('❌ [SERVER ERROR]', raw);
+      throw new Error(serverMsg);
     }
 
-    // บาง endpoint อาจไม่คืน JSON
-    if (!contentType.toLowerCase().includes('application/json')) {
-      const text = await res.text();
-      // @ts-expect-error - ในกรณี API ไม่ใช่ JSON จริง ๆ
-      return text;
+    if (!isJson) {
+      console.warn('⚠️ [NON-JSON RESPONSE]', raw);
+      return raw;
     }
 
-    const json = (await res.json()) as TResp;
-    console.log('✅ [PARSED JSON]', json);
-    return json;
+    console.log('✅ [PARSED JSON]', raw);
+    return raw as TResp;
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : typeof err === 'string' ? err : 'Unknown error';
@@ -83,25 +102,22 @@ async function request<TResp, TBody = unknown>(
   }
 }
 
-// ---------- Public APIs ----------
+/* ========= Public API functions (match your server) ========= */
 
-// 🔐 Login API
+// 🔐 Login — your server uses /api/check-user (NOT /api/login)
 export const login = (email: string, password: string) =>
-  request<{ token?: string; user?: any; message?: string }>('/api/check-user', {
-    email,
-    password,
-  });
+  request<AuthResponse>('/api/check-user', { email, password });
 
-// 📝 Register API
+// 📝 Register — expects fname (not "name")
 export const register = (
-  name: string,
+  fname: string,
   lname: string,
   email: string,
   password: string,
   phone: string
 ) =>
-  request<{ user?: any; message?: string }>('/api/register', {
-    name,
+  request<AuthResponse>('/api/register', {
+    fname,
     lname,
     email,
     password,
@@ -110,4 +126,15 @@ export const register = (
 
 // 👤 Update user
 export const updateUser = (userData: Record<string, unknown>) =>
-  request<{ success: boolean; user?: any; message?: string }>('/api/update-user', userData);
+  request<BasicResponse<ApiUser>>('/api/update-user', userData);
+
+// 🎯 Set goal
+export const setGoal = (payload: { user_id: number; goalType: 'walking' | 'bicycle' | string; value: number }) =>
+  request<BasicResponse<ApiUser>>('/api/set-goal', payload);
+
+/* ========= Helper ========= */
+export function pickUser(resp: AuthResponse | BasicResponse<ApiUser> | null | undefined): ApiUser | null {
+  if (!resp) return null;
+  // @ts-ignore
+  return (resp as any).data || (resp as any).user || null;
+}

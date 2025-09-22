@@ -8,36 +8,39 @@ import ProfileScreen from './ProfileScreen';
 
 const Tab = createBottomTabNavigator();
 
-type MainTabsProps = {
-  user: any;
-};
+type MainTabsProps = { user: any };
 
-const MainTabs = ({ user }: MainTabsProps) => {
+const MainTabs: React.FC<MainTabsProps> = ({ user }) => {
   return (
-    <Tab.Navigator id={undefined}
+    <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarIcon: ({ color, size }) => {
-          let iconName: any;
-
-          if (route.name === 'Home') iconName = 'home';
-          else if (route.name === 'Article') iconName = 'book';
+          let iconName: any = 'home';
+          if (route.name === 'Article') iconName = 'book';
           else if (route.name === 'Tracking') iconName = 'walk';
           else if (route.name === 'Profile') iconName = 'person';
-
+          else iconName = 'home';
           return <Ionicons name={iconName} size={size} color={color} />;
         },
       })}
     >
+      {/* ✅ เปลี่ยนชื่อแท็บเป็น HomeTab เพื่อเลี่ยง warning "Home > Home > Home" */}
       <Tab.Screen
-        name="Home"
+        name="HomeTab"
         children={() => <HomeStack user={user} />}
+        options={{ title: 'Home' }}
       />
+
       <Tab.Screen name="Article" component={ArticleScreen} />
+
       <Tab.Screen
         name="Tracking"
-        children={() => <TrackingStack user={user} />} // ✅ ใช้ children และส่ง user เป็น props
+        children={() => <TrackingStack user={user} />}
       />
+
+      {/* Profile ปัจจุบันอ่านจาก route.params.user
+         ระหว่างเซสชัน user จะไม่เปลี่ยนอยู่แล้ว ใช้ initialParams ได้ */}
       <Tab.Screen
         name="Profile"
         component={ProfileScreen}

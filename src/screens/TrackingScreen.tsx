@@ -79,8 +79,8 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
 
   const saveEndpoint =
     goalType === 'walking'
-      ? 'http://192.168.0.100:3000/api/save-walking'
-      : 'http://192.168.0.100:3000/api/save-cycling';
+      ? 'http://192.168.0.102:3000/api/save-walking'
+      : 'http://192.168.0.102:3000/api/save-cycling';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>

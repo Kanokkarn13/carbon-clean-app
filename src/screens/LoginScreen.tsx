@@ -1,3 +1,4 @@
+// app/screens/LoginScreen.tsx
 import React, { useState } from 'react';
 import {
   View,
@@ -22,8 +23,8 @@ type LoginScreenProps = {
 type AuthResponse = {
   success?: boolean;
   message?: string;
-  data?: any;    // <- backend ส่ง user กลับมาใน data
-  user?: any;    // เผื่อบาง env ส่งเป็น user
+  data?: any;    // backend sends user in data
+  user?: any;    // fallback if backend sends user directly
 };
 
 const theme = {
@@ -59,7 +60,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation, onLoginSuccess })
     try {
       const res: AuthResponse = await login(username.trim(), password);
 
-      // ✅ รองรับทั้ง res.user และ res.data
       const apiUser = res.user ?? res.data;
       if (!apiUser) {
         throw new Error(res.message || 'Malformed login response');
@@ -72,10 +72,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation, onLoginSuccess })
 
       Alert.alert('Welcome', fullName);
 
-      // ✅ สร้าง state user ใน _layout ผ่าน callback
       onLoginSuccess(apiUser);
-
-      // ✅ ไปหน้าหลัก (ไม่ต้องส่ง params เพราะ _layout ส่ง state ลง MainTabs ให้แล้ว)
       navigation.replace('Main');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Invalid credentials';
@@ -165,7 +162,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation, onLoginSuccess })
 
             <View style={styles.footerRow}>
               <Text style={{ color: theme.sub }}>Don’t have an account? </Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+              <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
                 <Text style={{ color: theme.primaryDark, fontWeight: '700' }}>
                   Sign up
                 </Text>
@@ -184,18 +181,49 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: '800', color: theme.text },
   subtitle: { color: theme.sub, marginTop: 6, textAlign: 'center' },
   card: {
-    backgroundColor: theme.card, borderRadius: 16, padding: 16,
-    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 }, elevation: 3,
+    backgroundColor: theme.card,
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   label: { color: theme.sub, fontSize: 13, marginBottom: 6 },
-  inputWrap: { borderWidth: 1, borderColor: theme.border, borderRadius: 12, backgroundColor: '#FFF', position: 'relative' },
-  input: { paddingVertical: 12, paddingHorizontal: 14, fontSize: 16, color: theme.text },
-  suffixBtn: { position: 'absolute', right: 8, top: 8, bottom: 8, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#F3F4F6' },
+  inputWrap: {
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 12,
+    backgroundColor: '#FFF',
+    position: 'relative',
+  },
+  input: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    fontSize: 16,
+    color: theme.text,
+  },
+  suffixBtn: {
+    position: 'absolute',
+    right: 8,
+    top: 8,
+    bottom: 8,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
   suffixText: { color: theme.sub, fontWeight: '700', fontSize: 12 },
   forgot: { color: theme.primaryDark, fontWeight: '700' },
   error: { color: theme.danger, marginTop: 10, fontWeight: '600' },
-  primaryBtn: { marginTop: 16, backgroundColor: theme.primary, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  primaryBtn: {
+    marginTop: 16,
+    backgroundColor: theme.primary,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
   primaryBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700' },
   footerRow: { marginTop: 14, flexDirection: 'row', justifyContent: 'center' },
 });

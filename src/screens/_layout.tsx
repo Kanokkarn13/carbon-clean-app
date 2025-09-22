@@ -1,23 +1,26 @@
+// app/navigation/Layout.tsx (or wherever this file lives)
 import React, { useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import LoginScreen from '../screens/LoginScreen';
+import SignupScreen from '../screens/SignupScreen';
 import MainTabs from '../screens/MainTabs';
 
 export type RootStackParamList = {
   Login: undefined;
-  Main: undefined; // ✅ ไม่ต้องส่ง user ผ่าน param แล้ว เพราะใช้ state
+  Signup: undefined;
+  Main: undefined; // using lifted state instead of params
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function Layout() {
-  const [user, setUser] = useState(null); // ✅ เก็บ user หลัง login
+  const [user, setUser] = useState<any>(null);
 
   return (
     <NavigationContainer>
-      <Stack.Navigator id={undefined} screenOptions={{ headerShown: false }}>
-        {/* ✅ ส่ง onLoginSuccess ผ่าน props */}
+      <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Login">
+        {/* Login */}
         <Stack.Screen name="Login">
           {(props) => (
             <LoginScreen
@@ -27,7 +30,17 @@ export default function Layout() {
           )}
         </Stack.Screen>
 
-        {/* ✅ ส่ง user เข้า MainTabs ผ่าน children แบบฟังก์ชัน */}
+        {/* Signup */}
+        <Stack.Screen name="Signup">
+          {(props) => (
+            <SignupScreen
+              {...props}
+              onSignupSuccess={(data) => setUser(data)}
+            />
+          )}
+        </Stack.Screen>
+
+        {/* Main (authenticated) */}
         <Stack.Screen name="Main">
           {(props) => <MainTabs {...props} user={user} />}
         </Stack.Screen>
