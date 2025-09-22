@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 
 // Helpers
 const toIntOrNull = (v) => {
@@ -16,6 +17,7 @@ const shapeUser = (row) => {
     email: row.email,
     phone: row.phone,
     vehicle: row.vehicle ?? null,
+    role: row.role,
     // 👇 ensure number (or null) and consistent snake_case key
     house_member: toIntOrNull(row.house_member),
     walk_goal: toIntOrNull(row.walk_goal),
@@ -51,10 +53,23 @@ exports.login = async (req, res) => {
     }
 
     const safeUser = shapeUser(user);
+
+
+    const token = jwt.sign(
+      { user_id: user.user_id, role: user.role },
+      process.env.JWT_SECRET || 'mysecretkey',
+      { expiresIn: '1d' }
+    );
+
     console.log('✅ Login successful for:', safeUser.email, 'house_member=', safeUser.house_member);
 
     // ✅ return normalized user so the app reads user.house_member as a number
-    return res.json({ success: true, message: 'Login successful', data: safeUser });
+    return res.json({
+      success: true,
+      message: 'Login successful',
+      token,     
+      data: safeUser
+    });
   } catch (err) {
     console.error('❌ Error during login:', err.message);
     return res.status(500).json({ success: false, message: 'Server error' });
@@ -77,10 +92,11 @@ exports.register = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newUser = { fname, lname, email, password: hashedPassword, phone };
-    await db.query('INSERT INTO users SET ?', newUser);
+    // register is user only
+    const newUser = { fname, lname, email, password: hashedPassword, phone, role: 'user' };
+    const [result] = await db.query('INSERT INTO users SET ?', newUser);
 
-    res.status(201).json({ success: true, message: 'User registered successfully' });
+    res.status(201).json({ success: true, message: 'User registered successfully', data: { user_id: result.insertId } });
   } catch (error) {
     console.error('❌ Register error:', error.message);
     res.status(500).json({ message: 'Server error' });

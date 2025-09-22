@@ -5,11 +5,12 @@ const db = require('./config/db');
 const authController = require('./controllers/authController');
 const { saveWalking } = require('./controllers/saveWalkingController');
 const { saveCycling } = require('./controllers/saveCyclingController');
-const activityRoutes = require('./routes/activityRoutes'); // << ensure this file exists
+const activityRoutes = require('./routes/activityRoutes');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 
-// Middleware
+// Middleware (ตั้งไว้ก่อน route)
 app.use(bodyParser.json());
 app.use(cors());
 app.use((req, res, next) => {
@@ -42,7 +43,10 @@ app.post('/api/set-goal', authController.setGoal);
 app.post('/api/save-walking', saveWalking);
 app.post('/api/save-cycling', saveCycling);
 
-// ✅ Read activity routes (recent activity)
+// ✅ Admin routes (ต้องใช้ verifyToken / verifyAdmin)
+app.use('/api/admin', adminRoutes);
+
+// ✅ Read activity routes
 app.use('/api', activityRoutes);
 
 // Default route
@@ -53,7 +57,6 @@ app.get('/', (req, res) => {
 // Start server
 const PORT = 3000;
 const HOST = '0.0.0.0';
-
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Server is running on http://${HOST}:${PORT}`);
 });
