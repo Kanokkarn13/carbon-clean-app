@@ -63,7 +63,7 @@ export default function Dashboard() {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`http://192.168.0.102:3000/api/recent-activity/${user.user_id}`);
+        const res = await fetch(`http://192.168.0.104:3000/api/recent-activity/${user.user_id}`);
         const json = await res.json();
         const arr = Array.isArray(json.activities) ? json.activities : [];
 

@@ -1,3 +1,4 @@
+// src/screens/ReduceCalculate.tsx
 import React, { useMemo, useState } from 'react';
 import {
   View,
@@ -10,7 +11,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { calculateEmission, emissionData } from '../hooks/calculateEmission';
 
 const theme = {
@@ -25,6 +26,10 @@ const theme = {
 
 const VEHICLES = ['Car', 'Motorbike', 'Bus', 'Taxis'] as const;
 const FUELS = ['Petrol', 'Diesel', 'Hybrid', 'Unknown'] as const;
+
+// ---- API origin (DON'T put /api in ENV) ----
+const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.104:3000';
+const api = (p: string) => `${API_ORIGIN}/api${p}`;
 
 function Chip({
   label,
@@ -109,7 +114,15 @@ function LabeledInput({
   );
 }
 
-function Card({ icon, title, children }: { icon: keyof typeof Ionicons.glyphMap; title: string; children: React.ReactNode }) {
+function Card({
+  icon,
+  title,
+  children,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
@@ -121,15 +134,29 @@ function Card({ icon, title, children }: { icon: keyof typeof Ionicons.glyphMap;
   );
 }
 
-function PrimaryButton({ title, onPress }: { title: string; onPress: () => void }) {
+function PrimaryButton({
+  title,
+  onPress,
+  style,
+}: {
+  title: string;
+  onPress: () => void;
+  style?: any;
+}) {
   return (
-    <TouchableOpacity style={styles.primaryBtn} onPress={onPress} activeOpacity={0.9}>
+    <TouchableOpacity style={[styles.primaryBtn, style]} onPress={onPress} activeOpacity={0.9}>
       <Text style={styles.primaryBtnText}>{title}</Text>
     </TouchableOpacity>
   );
 }
 
-function ResultBanner({ text, tone = 'positive' }: { text: string; tone?: 'positive' | 'warning' | 'neutral' }) {
+function ResultBanner({
+  text,
+  tone = 'positive',
+}: {
+  text: string;
+  tone?: 'positive' | 'warning' | 'neutral';
+}) {
   const styleMap =
     tone === 'warning'
       ? { bg: '#FEF3C7', border: '#FDE68A', color: '#92400E', icon: 'alert-circle' as const }
@@ -145,8 +172,11 @@ function ResultBanner({ text, tone = 'positive' }: { text: string; tone?: 'posit
   );
 }
 
-export default function ReduceCarbonScreen() {
+export default function ReduceCalculate() {
   const navigation = useNavigation();
+  const route = useRoute<any>();
+  // allow passing user from initialParams
+  const user = (route?.params && (route.params as any).user) || undefined;
 
   const [fromVehicle, setFromVehicle] = useState<(typeof VEHICLES)[number]>('Car');
   const [fromFuel, setFromFuel] = useState<(typeof FUELS)[number]>('Petrol');
@@ -164,25 +194,42 @@ export default function ReduceCarbonScreen() {
   const [electricReduction, setElectricReduction] = useState<number | null>(null);
 
   const getVehicleClasses = (vehicle: string, fuel?: string) => {
-    if (vehicle === 'Car') return emissionData[fuel || 'Petrol'] ? Object.keys(emissionData[fuel || 'Petrol']) : [];
-    return emissionData[vehicle] ? Object.keys(emissionData[vehicle]) : [];
+    if (vehicle === 'Car') {
+      const table = (emissionData as any)[fuel || 'Petrol'];
+      return table ? Object.keys(table) : [];
+    }
+    const table = (emissionData as any)[vehicle];
+    return table ? Object.keys(table) : [];
   };
 
-  // Options derived from selections
-  const fromClassOptions = useMemo(() => getVehicleClasses(fromVehicle, fromFuel), [fromVehicle, fromFuel]);
-  const toClassOptions = useMemo(() => getVehicleClasses(toVehicle, toFuel || undefined), [toVehicle, toFuel]);
+  const fromClassOptions = useMemo(
+    () => getVehicleClasses(fromVehicle, fromFuel),
+    [fromVehicle, fromFuel]
+  );
+  const toClassOptions = useMemo(
+    () => getVehicleClasses(toVehicle, toFuel || undefined),
+    [toVehicle, toFuel]
+  );
 
-  const parseKm = (v: string) => {
-    const d = parseFloat(v);
-    return isNaN(d) || d <= 0 ? null : d;
+  const parseNum = (v: string) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
   };
 
   const handleCalculate = () => {
-    const dist = parseKm(distance);
+    const dist = parseNum(distance);
     if (dist == null) return Alert.alert('Invalid distance', 'Please enter a positive number.');
 
-    const fromEmission = calculateEmission(fromVehicle === 'Car' ? fromFuel : fromVehicle, fromSize, dist);
-    const toEmission = calculateEmission(toVehicle === 'Car' ? (toFuel || 'Unknown') : toVehicle, toSize, dist);
+    const fromEmission = calculateEmission(
+      fromVehicle === 'Car' ? fromFuel : fromVehicle,
+      fromSize,
+      dist
+    );
+    const toEmission = calculateEmission(
+      toVehicle === 'Car' ? (toFuel || 'Unknown') : toVehicle,
+      toSize,
+      dist
+    );
 
     if (typeof fromEmission !== 'number' || typeof toEmission !== 'number') {
       return Alert.alert('Calculation error', 'Emission calculation returned invalid values.');
@@ -191,14 +238,127 @@ export default function ReduceCarbonScreen() {
   };
 
   const handleElectricReduction = () => {
-    const last = parseKm(electricLastMonth);
-    const curr = parseKm(electricThisMonth);
-    if (last == null || curr == null) return Alert.alert('Invalid kWh', 'Provide positive numbers for both months.');
-    const EF = 0.233; // kgCO2e per kWh (example factor)
+    const last = parseNum(electricLastMonth);
+    const curr = parseNum(electricThisMonth);
+    if (last == null || curr == null)
+      return Alert.alert('Invalid kWh', 'Provide positive numbers for both months.');
+    const EF = 0.233; // kgCO2e per kWh (example)
     setElectricReduction(last * EF - curr * EF);
   };
 
-  // When vehicle changes, reset dependent fields
+  const userId = Number(user?.user_id ?? user?.id);
+
+  // --- Save transport reduction ---
+  const handleSave = async () => {
+    if (!userId || userId <= 0) {
+      Alert.alert('Login required', 'Please log in before saving.');
+      return;
+    }
+    const dist = parseNum(distance);
+    if (dist == null) return Alert.alert('Invalid distance', 'Enter a positive number.');
+
+    const fromEmission = calculateEmission(
+      fromVehicle === 'Car' ? fromFuel : fromVehicle,
+      fromSize,
+      dist
+    );
+    const toEmission = calculateEmission(
+      toVehicle === 'Car' ? (toFuel || 'Unknown') : toVehicle,
+      toSize,
+      dist
+    );
+    const reduced = Number(fromEmission) - Number(toEmission);
+
+    if (!(reduced > 0)) {
+      Alert.alert(
+        'Not a reduction',
+        'This change does not reduce emissions, so it cannot be saved as a reduction.'
+      );
+      return;
+    }
+
+    const payload = {
+      user_id: userId,
+      point_value: reduced.toFixed(2),
+      distance_km: dist,
+      activity_from: fromVehicle,
+      param_from: fromVehicle === 'Car' ? `${fromFuel} ${fromSize}` : fromSize,
+      activity_to: toVehicle,
+      param_to: toVehicle === 'Car' ? `${toFuel || 'Unknown'} ${toSize}` : toSize,
+    };
+
+    try {
+      const res = await fetch(api('/reduction'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+      Alert.alert('Saved', 'Your reduction has been saved.');
+    } catch (e: any) {
+      let msg = e?.message || 'Network error';
+      try {
+        const j = JSON.parse(msg);
+        msg = j?.details || j?.error || msg;
+      } catch {}
+      Alert.alert('Save failed', String(msg));
+    }
+  };
+
+  // --- Save electricity reduction ---
+  const handleElectricSave = async () => {
+    if (!userId || userId <= 0) {
+      Alert.alert('Login required', 'Please log in before saving.');
+      return;
+    }
+    const last = parseNum(electricLastMonth);
+    const curr = parseNum(electricThisMonth);
+    if (last == null || curr == null)
+      return Alert.alert('Invalid kWh', 'Provide positive numbers for both months.');
+    const EF = 0.233;
+    const reduced = last * EF - curr * EF;
+
+    if (!(reduced > 0)) {
+      Alert.alert(
+        'Not a reduction',
+        'Your electricity use did not go down, so this cannot be saved as a reduction.'
+      );
+      return;
+    }
+
+    // Backend requires a positive distance_km. Use the kWh difference as a positive numeric token.
+    const distance_km = +(last - curr).toFixed(2);
+
+    const payload = {
+      user_id: userId,
+      point_value: reduced.toFixed(2),
+      distance_km: distance_km > 0 ? distance_km : 1, // ensure > 0
+      activity_from: 'Electricity',
+      param_from: `${last} kWh (last month)`,
+      activity_to: 'Electricity',
+      param_to: `${curr} kWh (this month)`,
+    };
+
+    try {
+      const res = await fetch(api('/reduction'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+      Alert.alert('Saved', 'Your electricity reduction has been saved.');
+    } catch (e: any) {
+      let msg = e?.message || 'Network error';
+      try {
+        const j = JSON.parse(msg);
+        msg = j?.details || j?.error || msg;
+      } catch {}
+      Alert.alert('Save failed', String(msg));
+    }
+  };
+
   const onChangeFromVehicle = (v: (typeof VEHICLES)[number]) => {
     setFromVehicle(v);
     if (v === 'Car') {
@@ -206,7 +366,7 @@ export default function ReduceCarbonScreen() {
       const cls = getVehicleClasses('Car', 'Petrol');
       setFromSize(cls[0] || '');
     } else {
-      setFromFuel('Petrol'); // keep a default but unused
+      setFromFuel('Petrol');
       const cls = getVehicleClasses(v);
       setFromSize(cls[0] || '');
     }
@@ -230,24 +390,36 @@ export default function ReduceCarbonScreen() {
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Ionicons name="arrow-back" size={24} color={theme.primary} />
           </TouchableOpacity>
           <Text style={styles.title}>Reduce Carbon</Text>
+          <View style={{ width: 24 }} />
         </View>
 
-        {/* Travel switching */}
+        {/* Transport switching */}
         <Card icon="swap-vertical" title="Switch Your Transport">
           <Text style={styles.label}>Vehicle you normally use</Text>
-          <ChipGroup options={VEHICLES as unknown as string[]} value={fromVehicle} onChange={(v) => onChangeFromVehicle(v as any)} />
+          <ChipGroup
+            options={VEHICLES as unknown as string[]}
+            value={fromVehicle}
+            onChange={(v) => onChangeFromVehicle(v as any)}
+          />
           {fromVehicle === 'Car' && (
             <>
               <Text style={[styles.label, { marginTop: 12 }]}>Fuel</Text>
-              <ChipGroup options={FUELS as unknown as string[]} value={fromFuel} onChange={(v) => {
-                setFromFuel(v as any);
-                const cls = getVehicleClasses('Car', v);
-                if (cls.length) setFromSize(cls[0]);
-              }} />
+              <ChipGroup
+                options={FUELS as unknown as string[]}
+                value={fromFuel}
+                onChange={(v) => {
+                  setFromFuel(v as any);
+                  const cls = getVehicleClasses('Car', v);
+                  if (cls.length) setFromSize(cls[0]);
+                }}
+              />
             </>
           )}
           <Text style={[styles.label, { marginTop: 12 }]}>Class</Text>
@@ -256,7 +428,11 @@ export default function ReduceCarbonScreen() {
           <View style={styles.divider} />
 
           <Text style={styles.label}>Vehicle you switch to</Text>
-          <ChipGroup options={VEHICLES as unknown as string[]} value={toVehicle} onChange={(v) => onChangeToVehicle(v as any)} />
+          <ChipGroup
+            options={VEHICLES as unknown as string[]}
+            value={toVehicle}
+            onChange={(v) => onChangeToVehicle(v as any)}
+          />
           {toVehicle === 'Car' && (
             <>
               <Text style={[styles.label, { marginTop: 12 }]}>Fuel</Text>
@@ -274,14 +450,32 @@ export default function ReduceCarbonScreen() {
           <Text style={[styles.label, { marginTop: 12 }]}>Class</Text>
           <ChipGroup options={toClassOptions} value={toSize} onChange={setToSize} scrollable />
 
-          <LabeledInput label="Distance" value={distance} onChangeText={setDistance} placeholder="e.g., 12.5" suffix="km" />
-          <PrimaryButton title="Calculate Reduction" onPress={handleCalculate} />
+          <LabeledInput
+            label="Distance"
+            value={distance}
+            onChangeText={setDistance}
+            placeholder="e.g., 12.5"
+            suffix="km"
+          />
+
+          {/* Action row: Calculate + Save */}
+          <View style={styles.actionsRow}>
+            <PrimaryButton title="Calculate Reduction" onPress={handleCalculate} />
+            <PrimaryButton
+              title="Save"
+              onPress={handleSave}
+              style={{ backgroundColor: theme.primaryDark }}
+            />
+          </View>
 
           {reduction !== null && (
             reduction > 0 ? (
               <ResultBanner text={`You could save ${reduction.toFixed(2)} kgCO₂e`} />
             ) : reduction < 0 ? (
-              <ResultBanner tone="warning" text={`Warning: +${Math.abs(reduction).toFixed(2)} kgCO₂e more`} />
+              <ResultBanner
+                tone="warning"
+                text={`Warning: +${Math.abs(reduction).toFixed(2)} kgCO₂e more`}
+              />
             ) : (
               <ResultBanner tone="neutral" text="No carbon reduction." />
             )
@@ -304,12 +498,25 @@ export default function ReduceCarbonScreen() {
             placeholder="e.g., 210"
             suffix="kWh"
           />
-          <PrimaryButton title="Compare Reduction" onPress={handleElectricReduction} />
+
+          {/* Action row: Compare + Save (same rule) */}
+          <View style={styles.actionsRow}>
+            <PrimaryButton title="Compare Reduction" onPress={handleElectricReduction} />
+            <PrimaryButton
+              title="Save"
+              onPress={handleElectricSave}
+              style={{ backgroundColor: theme.primaryDark }}
+            />
+          </View>
+
           {electricReduction !== null && (
             electricReduction > 0 ? (
               <ResultBanner text={`${electricReduction.toFixed(2)} kgCO₂e saved`} />
             ) : electricReduction < 0 ? (
-              <ResultBanner tone="warning" text={`You emitted +${Math.abs(electricReduction).toFixed(2)} kgCO₂e more`} />
+              <ResultBanner
+                tone="warning"
+                text={`You emitted +${Math.abs(electricReduction).toFixed(2)} kgCO₂e more`}
+              />
             ) : (
               <ResultBanner tone="neutral" text="No carbon reduction." />
             )
@@ -321,21 +528,10 @@ export default function ReduceCarbonScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    paddingBottom: 44,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  title: {
-    marginLeft: 10,
-    fontSize: 20,
-    fontWeight: '700',
-    color: theme.primaryDark,
-  },
+  container: { padding: 20, paddingBottom: 44 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, justifyContent: 'space-between' },
+  title: { fontSize: 20, fontWeight: '700', color: theme.primaryDark },
+
   card: {
     backgroundColor: theme.card,
     borderRadius: 16,
@@ -347,27 +543,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: theme.text,
-  },
-  label: {
-    color: theme.sub,
-    fontSize: 13,
-    marginBottom: 6,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  cardTitle: { fontSize: 16, fontWeight: '700', color: theme.text },
+
+  label: { color: theme.sub, fontSize: 13, marginBottom: 6 },
+
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -376,58 +557,28 @@ const styles = StyleSheet.create({
     borderColor: theme.border,
     backgroundColor: '#FFF',
   },
-  chipActive: {
-    backgroundColor: theme.primary,
-    borderColor: theme.primary,
-  },
-  chipText: {
-    color: theme.text,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  chipTextActive: {
-    color: '#FFF',
-  },
-  inputWrap: {
-    position: 'relative',
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 12,
-    backgroundColor: '#FFF',
-  },
-  input: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    fontSize: 16,
-    color: theme.text,
-  },
+  chipActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+  chipText: { color: theme.text, fontWeight: '600', fontSize: 13 },
+  chipTextActive: { color: '#FFF' },
+
+  inputWrap: { position: 'relative', borderWidth: 1, borderColor: theme.border, borderRadius: 12, backgroundColor: '#FFF' },
+  input: { paddingVertical: 12, paddingHorizontal: 14, fontSize: 16, color: theme.text },
   suffix: {
-    position: 'absolute',
-    right: 8,
-    top: 8,
-    bottom: 8,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    justifyContent: 'center',
-    backgroundColor: '#F3F4F6',
+    position: 'absolute', right: 8, top: 8, bottom: 8, borderRadius: 10,
+    paddingHorizontal: 10, justifyContent: 'center', backgroundColor: '#F3F4F6',
   },
-  suffixText: {
-    color: theme.sub,
-    fontWeight: '600',
-    fontSize: 12,
-  },
+  suffixText: { color: theme.sub, fontWeight: '600', fontSize: 12 },
+
   primaryBtn: {
     marginTop: 14,
     backgroundColor: theme.primary,
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: 'center',
+    flex: 1,
   },
-  primaryBtnText: {
-    color: '#FFF',
-    fontWeight: '700',
-    fontSize: 16,
-  },
+  primaryBtnText: { color: '#FFF', fontWeight: '700', fontSize: 16 },
+
   resultWrap: {
     marginTop: 12,
     borderWidth: 1,
@@ -439,12 +590,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  resultText: {
-    fontWeight: '700',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: theme.border,
-    marginVertical: 14,
+  resultText: { fontWeight: '700' },
+
+  divider: { height: 1, backgroundColor: theme.border, marginVertical: 14 },
+
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 6,
   },
 });

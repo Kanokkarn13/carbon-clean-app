@@ -9,7 +9,7 @@ const getBaseUrl = () => {
   }
   if (__DEV__) {
     if (Platform.OS === 'android') return 'http://10.0.2.2:3000'; // Android emulator -> host
-    return 'http://192.168.0.102:3000'; // iOS sim / device on LAN (adjust to your PC IP)
+    return 'http://192.168.0.104:3000'; // iOS sim / device on LAN (adjust to your PC IP)
   }
   return 'https://your-prod-domain.com';
 };

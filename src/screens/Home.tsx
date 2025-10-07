@@ -1,5 +1,5 @@
 // src/screens/Home.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -35,18 +35,18 @@ export type Activity = {
   distance_km?: number;
   step_total?: number;
   duration_sec?: number;
-  record_date?: string | Date | number; // supports ISO, 'YYYY-MM-DD HH:mm:ss', ms/sec timestamp
+  record_date?: string | Date | number;
   id?: string | number;
 };
 
 type Props = {
   navigation: HomeNav;
-  user?: HomeUser; // may be undefined if not passed as prop
+  user?: HomeUser;
 };
-// ---------------------------
 
-// .env (recommended): EXPO_PUBLIC_API_URL=http://192.168.0.102:3000
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+// .env (recommended): EXPO_PUBLIC_API_URL=http://192.168.0.104:3000
+const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.104:3000';
+const api = (p: string) => `${BASE_URL}/api${p}`;
 
 const theme = {
   primary: '#10B981',
@@ -57,6 +57,7 @@ const theme = {
   sub: '#6B7280',
   border: '#E5E7EB',
   chip: '#ECFDF5',
+  danger: '#DC2626',
 };
 
 function toActivityType(input: unknown): ActivityType {
@@ -65,9 +66,7 @@ function toActivityType(input: unknown): ActivityType {
   return 'Walking';
 }
 
-/**
- * Normalize activity payload from various backends.
- */
+/** Normalize activity payload from various backends. */
 function normalizeActivities(raw: any): Activity[] {
   const arr =
     (Array.isArray(raw) && raw) ||
@@ -153,11 +152,7 @@ function formatDistance(kmInput?: number) {
   const km = Number(kmInput ?? 0);
   const wholeKm = Math.floor(km);
   let meters = Math.round((km - wholeKm) * 1000);
-
-  // Handle rounding up like 0.9996 km -> 1.000 km (avoid "1000 m")
-  if (meters === 1000) {
-    return `${wholeKm + 1} km`;
-  }
+  if (meters === 1000) return `${wholeKm + 1} km`;
   if (wholeKm <= 0) return `${meters} m`;
   if (meters <= 0) return `${wholeKm} km`;
   return `${wholeKm} km ${meters} m`;
@@ -166,20 +161,10 @@ function formatDistance(kmInput?: number) {
 function parseRecordDate(input: any): Date | undefined {
   if (!input) return undefined;
   if (input instanceof Date) return input;
-
-  if (typeof input === 'number') {
-    // Support ms or sec timestamps (heuristic)
-    if (input < 1e11) return new Date(input * 1000);
-    return new Date(input);
-  }
-
+  if (typeof input === 'number') return new Date(input < 1e11 ? input * 1000 : input);
   if (typeof input === 'string') {
     const s = input.trim();
-    // MySQL 'YYYY-MM-DD HH:mm:ss'
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) {
-      return new Date(s.replace(' ', 'T'));
-    }
-    // ISO and other common forms
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) return new Date(s.replace(' ', 'T'));
     return new Date(s);
   }
   return undefined;
@@ -188,16 +173,12 @@ function parseRecordDate(input: any): Date | undefined {
 function formatWhen(record_date: any): string {
   const d = parseRecordDate(record_date);
   if (!d || isNaN(d.getTime())) return '—';
-
   const now = new Date();
   const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
-
   if (diffSec < 60) return 'just now';
   if (diffSec < 3600) return `${Math.floor(diffSec / 60)} minutes ago`;
   if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} hours ago`;
   if (diffSec < 7 * 86400) return `${Math.floor(diffSec / 86400)} days ago`;
-
-  // > 1 week: show date (adjust locale/format as needed)
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 /** ----------------------------------------------------- */
@@ -207,32 +188,83 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const routeUser = route?.params?.user as HomeUser | undefined;
   const user = userProp ?? routeUser;
 
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [loading, setLoading] = useState(false);
   const isFocused = useIsFocused();
 
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // 🔢 totals from DB
+  const [totalEmission, setTotalEmission] = useState<number>(0);
+  const [emissionLoading, setEmissionLoading] = useState<boolean>(false);
+
+  const [totalReduction, setTotalReduction] = useState<number>(0);
+  const [reductionLoading, setReductionLoading] = useState<boolean>(false);
+
   // Accept user_id or id
-  function getUserId(u?: { user_id?: string | number; id?: string | number }) {
-    if (!u) return undefined;
-    return (u.user_id ?? u.id) != null ? String(u.user_id ?? u.id) : undefined;
-  }
+  const uid = useMemo(() => {
+    if (!user) return undefined;
+    const v = user.user_id ?? (user as any).id;
+    return v != null ? String(v) : undefined;
+  }, [user]);
+
+  /** ---- Fetch saved emissions and sum point_value ---- */
+  const fetchEmissionTotal = useCallback(async () => {
+    if (!uid) {
+      setTotalEmission(0);
+      return;
+    }
+    setEmissionLoading(true);
+    try {
+      const res = await fetch(api(`/saved/${encodeURIComponent(uid)}`));
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+      const json = text ? JSON.parse(text) : { items: [] };
+      const items: any[] = Array.isArray(json?.items) ? json.items : [];
+      const sum = items.reduce((acc, it) => acc + Number(it?.point_value || 0), 0);
+      setTotalEmission(sum);
+    } catch (e) {
+      setTotalEmission(0);
+    } finally {
+      setEmissionLoading(false);
+    }
+  }, [uid]);
+
+  /** ---- Fetch saved reductions and sum point_value ---- */
+  const fetchReductionTotal = useCallback(async () => {
+    if (!uid) {
+      setTotalReduction(0);
+      return;
+    }
+    setReductionLoading(true);
+    try {
+      const res = await fetch(api(`/reduction/saved/${encodeURIComponent(uid)}`));
+      const text = await res.text();
+      if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+      const json = text ? JSON.parse(text) : { items: [] };
+      const items: any[] = Array.isArray(json?.items) ? json.items : [];
+      const sum = items.reduce((acc, it) => acc + Number(it?.point_value || 0), 0);
+      setTotalReduction(sum);
+    } catch (e) {
+      setTotalReduction(0);
+    } finally {
+      setReductionLoading(false);
+    }
+  }, [uid]);
 
   useEffect(() => {
+    if (isFocused) {
+      fetchEmissionTotal();
+      fetchReductionTotal();
+    }
+  }, [isFocused, fetchEmissionTotal, fetchReductionTotal]);
+
+  /** ---- Recent activities (walking/cycling) ---- */
+  useEffect(() => {
     const fetchActivities = async () => {
-      const uid = getUserId(user);
-      console.log('[Home] effective user =', user);
-      console.log('[Home] isFocused =', isFocused, '| uid =', uid);
-
-      if (!uid) {
-        console.log('[Home] skip: no user id');
-        setActivities([]);
+      if (!uid || !isFocused) {
+        if (!uid) setActivities([]);
         return;
       }
-      if (!isFocused) {
-        console.log('[Home] skip: not focused');
-        return;
-      }
-
       setLoading(true);
 
       const tryUrls = [
@@ -245,10 +277,8 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
         let data: any | undefined;
 
         for (const url of tryUrls) {
-          console.log('[RecentActivity] TRY', url);
           try {
             const res = await fetch(url);
-            console.log('[RecentActivity] status', res.status, 'for', url);
             if (!res.ok) continue;
             const j = await res.json();
             const arr =
@@ -258,38 +288,25 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
               (Array.isArray(j?.results) && j.results) ||
               (Array.isArray(j?.items) && j.items) ||
               [];
-            console.log('[RecentActivity] array length from', url, '=', arr.length);
-            data = j;
-            break;
-          } catch (e) {
-            console.log('[RecentActivity] try failed', url, e);
-          }
+            if (arr.length >= 0) {
+              data = j;
+              break;
+            }
+          } catch {}
         }
 
         if (!data) {
-          console.log('[RecentActivity] fallback POST', urlPost);
           const resPost = await fetch(urlPost, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id: uid }),
           });
-          console.log('[RecentActivity] POST status', resPost.status);
           if (resPost.ok) data = await resPost.json();
         }
 
-        if (!data) {
-          console.log('[RecentActivity] no data from any endpoint');
-          setActivities([]);
-          return;
-        }
-
-        console.log('[RecentActivity] payload', data);
-        const list = normalizeActivities(data);
-        if (__DEV__ && list[0]) console.log('[RecentActivity] normalized sample:', list[0]);
-        console.log('[RecentActivity] final length =', list.length);
+        const list = normalizeActivities(data || []);
         setActivities(list.slice(0, 10));
-      } catch (e) {
-        console.warn('[RecentActivity] fetch error:', e);
+      } catch {
         setActivities([]);
       } finally {
         setLoading(false);
@@ -297,18 +314,19 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
     };
 
     fetchActivities();
-  }, [isFocused, user?.user_id, user?.id]);
+  }, [isFocused, uid]);
 
-  const handleActivityPress = () => navigation.navigate('Calculation');
+  const handleActivityPress = () => navigation.navigate('Calculation', { user });
 
   const fullName =
     user?.fname || user?.lname
       ? `${user?.fname ?? ''} ${user?.lname ?? ''}`.trim()
       : 'Guest';
 
-  const goToRecentAct = (activity: Activity) => {
-    (navigation as any).navigate('RecentAct', { activity });
-  };
+  // --- total comparison (Reduction vs Emission) ---
+  const diff = totalReduction - totalEmission; // positive => good (green), negative => bad (red)
+  const diffColor = diff >= 0 ? styles.statPositive : styles.statNegative;
+  const diffText = `${diff >= 0 ? '' : ''}${diff.toFixed(2)} kgCO₂e`; // keep normal sign (will be negative if emission>reduction)
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -377,7 +395,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
           <TouchableOpacity
             style={styles.quickCard}
-            onPress={() => navigation.navigate('Calculation')}
+            onPress={() => navigation.navigate('Calculation', { user })}
             activeOpacity={0.9}
           >
             <View style={styles.quickIcon}>
@@ -409,15 +427,21 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
             <View style={styles.activityInfo}>
               <View style={styles.statRow}>
                 <Text style={styles.statLabel}>Emission</Text>
-                <Text style={styles.statValue}>0.00 kgCO₂e</Text>
+                <Text style={styles.statValue}>
+                  {emissionLoading ? '…' : `${totalEmission.toFixed(2)} kgCO₂e`}
+                </Text>
               </View>
+
               <View style={styles.statRow}>
-                <Text style={styles.statLabel}>Last month</Text>
-                <Text style={styles.statMuted}>0.00 kgCO₂e</Text>
+                <Text style={styles.statLabel}>Reduction</Text>
+                <Text style={styles.statPositive}>
+                  {reductionLoading ? '…' : `${totalReduction.toFixed(2)} kgCO₂e`}
+                </Text>
               </View>
+
               <View style={styles.statRow}>
                 <Text style={styles.statLabel}>Total</Text>
-                <Text style={styles.statPositive}>0.00 kgCO₂e</Text>
+                <Text style={[styles.statValue, diffColor]}>{diffText}</Text>
               </View>
             </View>
           </TouchableOpacity>
@@ -444,7 +468,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
                   key={`${activity.type}-${activity.id ?? idx}-${activity.record_date ?? idx}`}
                   style={styles.recentItem}
                   activeOpacity={0.9}
-                  onPress={() => goToRecentAct(activity)}
+                  onPress={() => (navigation as any).navigate('RecentAct', { activity })}
                 >
                   <View style={styles.recentIcon}>
                     <Ionicons name={iconName as any} size={18} color={theme.primaryDark} />
@@ -581,6 +605,7 @@ const styles = StyleSheet.create({
   statValue: { color: theme.text, fontWeight: '700' },
   statMuted: { color: theme.sub, fontWeight: '600' },
   statPositive: { color: theme.primaryDark, fontWeight: '700' },
+  statNegative: { color: theme.danger, fontWeight: '700' },
 
   emptyState: {
     borderWidth: 1,

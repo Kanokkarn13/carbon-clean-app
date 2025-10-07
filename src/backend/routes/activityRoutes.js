@@ -1,10 +1,14 @@
 // routes/activityRoutes.js
 const express = require('express');
 const db = require('../config/db');
+const { saveTransportEmission, listSavedActivities } = require('../controllers/saveEmissionController');
 const router = express.Router();
 
-console.log('[activityRoutes] loaded:', __filename, 'ver=r2-no-created-at');
+console.log('[activityRoutes] loaded:', __filename, 'ver=r3-add-save-emission');
 
+// ------------------------------
+// internal helper for recent history
+// ------------------------------
 async function fetchRecentActivities(userId) {
   // WALKING
   const [walks] = await db.query(
@@ -71,7 +75,9 @@ async function fetchRecentActivities(userId) {
   return { activities };
 }
 
-// GET ปกติ
+// ------------------------------
+// EXISTING: recent activity endpoints
+// ------------------------------
 router.get('/recent-activity/:user_id', async (req, res) => {
   try {
     const out = await fetchRecentActivities(req.params.user_id);
@@ -83,7 +89,6 @@ router.get('/recent-activity/:user_id', async (req, res) => {
   }
 });
 
-// GET /full กัน 404
 router.get('/recent-activity/full/:user_id', async (req, res) => {
   try {
     const out = await fetchRecentActivities(req.params.user_id);
@@ -95,7 +100,6 @@ router.get('/recent-activity/full/:user_id', async (req, res) => {
   }
 });
 
-// POST fallback
 router.post('/recent-activity', async (req, res) => {
   try {
     const out = await fetchRecentActivities(req.body?.user_id);
@@ -106,5 +110,22 @@ router.post('/recent-activity', async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
+
+// ------------------------------
+// NEW: save + list saved emission records
+// ------------------------------
+
+/**
+ * POST /emission
+ * body: { user_id, activity_type: 'Car'|'Motorcycle'|'Taxi'|'Bus', emission_kgco2e, distance_km, parameters? }
+ * Writes a row into activities(user_id, point_value, activity, create_at, updated_at).
+ */
+router.post('/emission', saveTransportEmission);
+
+/**
+ * GET /saved/:user_id?limit=50&offset=0
+ * Reads from activities table for a given user.
+ */
+router.get('/saved/:user_id', listSavedActivities);
 
 module.exports = router;
