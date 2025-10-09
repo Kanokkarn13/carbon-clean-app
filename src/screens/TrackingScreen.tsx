@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,20 @@ import {
   TouchableOpacity,
   Modal,
   TextInput,
+  Keyboard,
+  TouchableWithoutFeedback,
+  ScrollView,
+  Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 
 import { useTracking } from '../hooks/useTracking';
-import MapViewComponent from '../components/MapViewComponent';
+// import MapViewComponent from '../components/MapViewComponent'; // ⬅️ no longer used here
 
 type Navigation = NativeStackNavigationProp<any>;
 type TrackingScreenProps = { user: any };
@@ -54,6 +60,35 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
     updateCount,
   } = useTracking();
 
+  // ===== Map: keep region centered to current user location =====
+  const mapRef = useRef<MapView | null>(null);
+  const DEFAULT_REGION: Region = {
+    latitude: 13.7563,
+    longitude: 100.5018,
+    latitudeDelta: 0.05,
+    longitudeDelta: 0.05,
+  };
+  const [mapRegion, setMapRegion] = useState<Region>(DEFAULT_REGION);
+
+  // When a new GPS fix arrives, animate/center the map softly
+  useEffect(() => {
+    if (location?.coords) {
+      const next: Region = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        latitudeDelta: 0.004, // zoomed-in street level
+        longitudeDelta: 0.004,
+      };
+      setMapRegion(next);
+      // Smooth animate (ignore if ref missing)
+      if (mapRef.current) {
+        try {
+          mapRef.current.animateToRegion(next, 600);
+        } catch {}
+      }
+    }
+  }, [location?.coords?.latitude, location?.coords?.longitude]);
+
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -83,200 +118,301 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
       : 'http://192.168.0.104:3000/api/save-cycling';
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.headerSide}
-          onPress={() => navigation.goBack()}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.headerSide}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="arrow-back" size={22} color={theme.primary} />
+          </TouchableOpacity>
+          <Text style={styles.title}>Tracking</Text>
+          <View style={styles.headerSide} />
+        </View>
+
+        {/* Make the whole content scrollable + avoid keyboard overlap on iOS */}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <Ionicons name="arrow-back" size={22} color={theme.primary} />
-        </TouchableOpacity>
-        <Text style={styles.title}>Tracking</Text>
-        <View style={styles.headerSide} />
-      </View>
-
-      <View style={styles.maincontainer}>
-        {/* Map */}
-        <View style={styles.mapContainer}>
-          <MapViewComponent location={location} />
-        </View>
-
-        {/* Toggle */}
-        <View style={styles.toggleContainer}>
-          {(['walking', 'cycling'] as const).map((t) => {
-            const active = goalType === t;
-            return (
-              <TouchableOpacity
-                key={t}
-                style={[styles.toggleBtn, active && styles.toggleBtnActive]}
-                onPress={() => setGoalType(t)}
-                activeOpacity={0.9}
-              >
-                <Ionicons
-                  name={t === 'walking' ? 'walk-outline' : 'bicycle-outline'}
-                  size={16}
-                  color={active ? '#FFF' : theme.primaryDark}
-                />
-                <Text style={[styles.toggleText, active && styles.toggleTextActive]}>
-                  {t === 'walking' ? 'Walking' : 'Cycling'}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Metrics */}
-        <View style={styles.metricsCard}>
-          {[
-            { icon: 'map-outline', value: distance.toFixed(3), label: 'Distance', unit: 'km' },
-            { icon: 'speedometer-outline', value: speed.toFixed(2), label: 'Speed', unit: 'km/h' },
-            { icon: 'time-outline', value: formatTime(time), label: 'Time', unit: '' },
-            ...(goalType === 'walking'
-              ? [{ icon: 'footsteps-outline', value: String(steps), label: 'Steps', unit: '' }]
-              : []),
-          ].map((m, idx) => (
-            <View key={`${m.label}-${idx}`} style={styles.metricItem}>
-              <View style={styles.metricIcon}>
-                <Ionicons name={m.icon as any} size={16} color={theme.primaryDark} />
-              </View>
-              <Text style={styles.metricValue}>{m.value}</Text>
-              <Text style={styles.metricLabel}>
-                {m.label} {m.unit ? `(${m.unit})` : ''}
-              </Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Debug */}
-        <View style={styles.debugContainer}>
-          <Text style={styles.debugText}>Tracking: {isTracking ? 'ACTIVE' : 'INACTIVE'}</Text>
-          <Text style={styles.debugText}>Subscription: {subscription ? 'EXISTS' : 'NULL'}</Text>
-          {location ? (
-            <Text style={styles.debugTextSmall}>
-              Lat {location.coords.latitude.toFixed(6)} · Lng {location.coords.longitude.toFixed(6)} ·
-              Speed {speed.toFixed(2)} km/h · Updates {updateCount}
-            </Text>
-          ) : null}
-        </View>
-
-        {/* Actions */}
-        <View style={styles.actionsRow}>
-          <TouchableOpacity
-            style={[styles.actionBtn, isTracking ? styles.btnDanger : styles.btnPrimary]}
-            onPress={isTracking ? handleStop : handleStart}
-            activeOpacity={0.9}
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
-            <Ionicons name={isTracking ? 'square-outline' : 'play-outline'} size={18} color="#FFF" />
-            <Text style={styles.actionText}>{isTracking ? 'Stop' : 'Start'}</Text>
-          </TouchableOpacity>
+            <View style={styles.maincontainer}>
+              {/* Map with current location */}
+              <View style={styles.mapContainer}>
+                <MapView
+                  ref={mapRef}
+                  provider={PROVIDER_GOOGLE}
+                  style={{ flex: 1 }}
+                  initialRegion={mapRegion}
+                  region={mapRegion}
+                  showsUserLocation
+                  showsMyLocationButton
+                  loadingEnabled
+                  loadingIndicatorColor={theme.primaryDark}
+                  rotateEnabled={false}
+                  toolbarEnabled={false}
+                  moveOnMarkerPress={false}
+                  onRegionChangeComplete={(r) => setMapRegion(r)}
+                >
+                  {/* Optional: pin the current location explicitly */}
+                  {location?.coords && (
+                    <Marker
+                      coordinate={{
+                        latitude: location.coords.latitude,
+                        longitude: location.coords.longitude,
+                      }}
+                      title="You are here"
+                    />
+                  )}
+                </MapView>
 
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.btnSecondary, !isFinished && { opacity: 0.6 }]}
-            onPress={() => setShowModal(true)}
-            disabled={!isFinished}
-            activeOpacity={0.9}
-          >
-            <Ionicons name="save-outline" size={18} color={isFinished ? theme.primaryDark : theme.sub} />
-            <Text style={[styles.actionTextSecondary, !isFinished && { color: theme.sub }]}>Save</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Save Modal */}
-        <Modal visible={showModal} transparent animationType="slide" onRequestClose={() => setShowModal(false)}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Save Activity</Text>
-                <TouchableOpacity onPress={() => setShowModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                  <Ionicons name="close" size={22} color={theme.sub} />
+                {/* Recenter button (top-right) */}
+                <TouchableOpacity
+                  style={styles.recenterBtn}
+                  onPress={() => {
+                    const r = location?.coords
+                      ? {
+                          latitude: location.coords.latitude,
+                          longitude: location.coords.longitude,
+                          latitudeDelta: 0.004,
+                          longitudeDelta: 0.004,
+                        }
+                      : DEFAULT_REGION;
+                    setMapRegion(r);
+                    if (mapRef.current) {
+                      try {
+                        mapRef.current.animateToRegion(r, 500);
+                      } catch {}
+                    }
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="locate-outline" size={18} color={theme.primaryDark} />
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.inputWrap}>
-                <Text style={styles.inputLabel}>Title</Text>
-                <TextInput
-                  value={inputTitle}
-                  onChangeText={setInputTitle}
-                  placeholder="Morning ride"
-                  placeholderTextColor={theme.sub}
-                  style={styles.input}
-                />
+              {/* Toggle */}
+              <View style={styles.toggleContainer}>
+                {(['walking', 'cycling'] as const).map((t) => {
+                  const active = goalType === t;
+                  return (
+                    <TouchableOpacity
+                      key={t}
+                      style={[styles.toggleBtn, active && styles.toggleBtnActive]}
+                      onPress={() => setGoalType(t)}
+                      activeOpacity={0.9}
+                    >
+                      <Ionicons
+                        name={t === 'walking' ? 'walk-outline' : 'bicycle-outline'}
+                        size={16}
+                        color={active ? '#FFF' : theme.primaryDark}
+                      />
+                      <Text style={[styles.toggleText, active && styles.toggleTextActive]}>
+                        {t === 'walking' ? 'Walking' : 'Cycling'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
 
-              <View style={styles.inputWrap}>
-                <Text style={styles.inputLabel}>Description</Text>
-                <TextInput
-                  value={inputDesc}
-                  onChangeText={setInputDesc}
-                  placeholder="Nice weather, smooth pace"
-                  placeholderTextColor={theme.sub}
-                  style={[styles.input, { height: 96, textAlignVertical: 'top' }]}
-                  multiline
-                />
+              {/* Metrics */}
+              <View style={styles.metricsCard}>
+                {[
+                  { icon: 'map-outline', value: distance.toFixed(3), label: 'Distance', unit: 'km' },
+                  { icon: 'speedometer-outline', value: speed.toFixed(2), label: 'Speed', unit: 'km/h' },
+                  { icon: 'time-outline', value: formatTime(time), label: 'Time', unit: '' },
+                  ...(goalType === 'walking'
+                    ? [{ icon: 'footsteps-outline', value: String(steps), label: 'Steps', unit: '' }]
+                    : []),
+                ].map((m, idx) => (
+                  <View key={`${m.label}-${idx}`} style={styles.metricItem}>
+                    <View style={styles.metricIcon}>
+                      <Ionicons name={m.icon as any} size={16} color={theme.primaryDark} />
+                    </View>
+                    <Text style={styles.metricValue}>{m.value}</Text>
+                    <Text style={styles.metricLabel}>
+                      {m.label} {m.unit ? `(${m.unit})` : ''}
+                    </Text>
+                  </View>
+                ))}
               </View>
 
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryText}>Distance: {distance.toFixed(2)} km</Text>
-                <Text style={styles.summaryText}>Duration: {formatTime(time)}</Text>
-                {goalType === 'walking' ? <Text style={styles.summaryText}>Steps: {steps}</Text> : null}
+              {/* Debug */}
+              <View style={styles.debugContainer}>
+                <Text style={styles.debugText}>Tracking: {isTracking ? 'ACTIVE' : 'INACTIVE'}</Text>
+                <Text style={styles.debugText}>Subscription: {subscription ? 'EXISTS' : 'NULL'}</Text>
+                {location ? (
+                  <Text style={styles.debugTextSmall}>
+                    Lat {location.coords.latitude.toFixed(6)} · Lng {location.coords.longitude.toFixed(6)} ·
+                    Speed {speed.toFixed(2)} km/h · Updates {updateCount}
+                  </Text>
+                ) : (
+                  <Text style={styles.debugTextSmall}>Waiting for GPS fix…</Text>
+                )}
               </View>
 
-              <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.modalBtn, styles.modalBtnGhost]} onPress={() => setShowModal(false)}>
-                  <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              {/* Actions */}
+              <View style={styles.actionsRow}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, isTracking ? styles.btnDanger : styles.btnPrimary]}
+                  onPress={isTracking ? handleStop : handleStart}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name={isTracking ? 'square-outline' : 'play-outline'} size={18} color="#FFF" />
+                  <Text style={styles.actionText}>{isTracking ? 'Stop' : 'Start'}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.modalBtn, styles.modalBtnPrimary]}
-                  onPress={async () => {
-                    const payload: any = {
-                      title: inputTitle,
-                      description: inputDesc,
-                      distance_km: distance,
-                      duration_sec: time,
-                      user_id: user.user_id,
-                    };
-                    if (goalType === 'walking') payload.step_total = steps;
-
-                    try {
-                      const response = await fetch(saveEndpoint, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload),
-                      });
-
-                      const contentType = response.headers.get('content-type');
-                      if (contentType && contentType.includes('application/json')) {
-                        const result = await response.json();
-                        if (response.ok) {
-                          Alert.alert('✅ Saved', result.message || 'Activity saved!');
-                          setShowModal(false);
-                          navigation.navigate('CarbonOffsetScreen', { user, distance });
-                          resetLocalState();
-                        } else {
-                          Alert.alert('❌ Error', result.message || 'Failed to save activity');
-                        }
-                      } else {
-                        const text = await response.text();
-                        Alert.alert('❌ Server Error', text);
-                      }
-                    } catch (error) {
-                      Alert.alert('❌ Network Error', 'Could not connect to server');
-                    }
-                  }}
+                  style={[styles.actionBtn, styles.btnSecondary, !isFinished && { opacity: 0.6 }]}
+                  onPress={() => setShowModal(true)}
+                  disabled={!isFinished}
                   activeOpacity={0.9}
                 >
-                  <Ionicons name="checkmark-circle-outline" size={18} color="#FFF" />
-                  <Text style={styles.modalBtnPrimaryText}>Confirm Save</Text>
+                  <Ionicons name="save-outline" size={18} color={isFinished ? theme.primaryDark : theme.sub} />
+                  <Text style={[styles.actionTextSecondary, !isFinished && { color: theme.sub }]}>Save</Text>
                 </TouchableOpacity>
               </View>
             </View>
-          </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+
+        {/* Save Modal */}
+        <Modal
+          visible={showModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowModal(false)}
+        >
+          {/* Tap overlay to dismiss keyboard (not the modal) */}
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+            <View style={styles.modalOverlay}>
+              {/* Tap any empty area in the card to dismiss keyboard */}
+              <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+                {/* Scrollable modal content to avoid keyboard */}
+                <KeyboardAvoidingView
+                  behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                  style={{ width: '100%' }}
+                >
+                  <ScrollView
+                    contentContainerStyle={styles.modalScroll}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <View style={styles.modalCard}>
+                      <View style={styles.modalHeader}>
+                        <Text style={styles.modalTitle}>Save Activity</Text>
+                        <TouchableOpacity
+                          onPress={() => setShowModal(false)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="close" size={22} color={theme.sub} />
+                        </TouchableOpacity>
+                      </View>
+
+                      <View style={styles.inputWrap}>
+                        <Text style={styles.inputLabel}>Title</Text>
+                        <TextInput
+                          value={inputTitle}
+                          onChangeText={setInputTitle}
+                          placeholder="Morning ride"
+                          placeholderTextColor={theme.sub}
+                          style={styles.input}
+                          returnKeyType="done"
+                          onSubmitEditing={Keyboard.dismiss}
+                          blurOnSubmit
+                        />
+                      </View>
+
+                      <View style={styles.inputWrap}>
+                        <Text style={styles.inputLabel}>Description</Text>
+                        <TextInput
+                          value={inputDesc}
+                          onChangeText={setInputDesc}
+                          placeholder="Nice weather, smooth pace"
+                          placeholderTextColor={theme.sub}
+                          style={[styles.input, { height: 96, textAlignVertical: 'top' }]}
+                          multiline
+                          onSubmitEditing={Keyboard.dismiss}
+                          blurOnSubmit
+                        />
+                      </View>
+
+                      <View style={styles.summaryRow}>
+                        <Text style={styles.summaryText}>Distance: {distance.toFixed(2)} km</Text>
+                        <Text style={styles.summaryText}>Duration: {formatTime(time)}</Text>
+                        {goalType === 'walking' ? (
+                          <Text style={styles.summaryText}>Steps: {steps}</Text>
+                        ) : null}
+                      </View>
+
+                      <View style={styles.modalActions}>
+                        <TouchableOpacity
+                          style={[styles.modalBtn, styles.modalBtnGhost]}
+                          onPress={() => setShowModal(false)}
+                        >
+                          <Text style={styles.modalBtnGhostText}>Cancel</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          style={[styles.modalBtn, styles.modalBtnPrimary]}
+                          onPress={async () => {
+                            const payload: any = {
+                              title: inputTitle,
+                              description: inputDesc,
+                              distance_km: distance,
+                              duration_sec: time,
+                              user_id: user.user_id,
+                            };
+                            if (goalType === 'walking') payload.step_total = steps;
+
+                            try {
+                              const response = await fetch(saveEndpoint, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload),
+                              });
+
+                              const contentType = response.headers.get('content-type');
+                              if (contentType && contentType.includes('application/json')) {
+                                const result = await response.json();
+                                if (response.ok) {
+                                  Alert.alert('✅ Saved', result.message || 'Activity saved!');
+                                  setShowModal(false);
+                                  navigation.navigate('CarbonOffsetScreen', { user, distance });
+                                  resetLocalState();
+                                } else {
+                                  Alert.alert('❌ Error', result.message || 'Failed to save activity');
+                                }
+                              } else {
+                                const text = await response.text();
+                                Alert.alert('❌ Server Error', text);
+                              }
+                            } catch (error) {
+                              Alert.alert('❌ Network Error', 'Could not connect to server');
+                            }
+                          }}
+                          activeOpacity={0.9}
+                        >
+                          <Ionicons name="checkmark-circle-outline" size={18} color="#FFF" />
+                          <Text style={styles.modalBtnPrimaryText}>Confirm Save</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </ScrollView>
+                </KeyboardAvoidingView>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
         </Modal>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </TouchableWithoutFeedback>
   );
 }
 
@@ -293,6 +429,10 @@ const styles = StyleSheet.create({
   headerSide: { width: 28, alignItems: 'flex-start' },
   title: { fontSize: 20, fontWeight: '800', color: theme.primaryDark },
 
+  scrollContent: {
+    paddingBottom: 24,
+  },
+
   maincontainer: { flex: 1, padding: 16, backgroundColor: theme.bg },
 
   mapContainer: {
@@ -302,6 +442,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.border,
     backgroundColor: '#FFF',
+  },
+
+  // Recenter floating button
+  recenterBtn: {
+    position: 'absolute',
+    right: 10,
+    top: 10,
+    backgroundColor: theme.chip,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    borderRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    elevation: 2,
   },
 
   // Toggle chips
@@ -387,7 +541,16 @@ const styles = StyleSheet.create({
   actionTextSecondary: { color: theme.primaryDark, fontWeight: '800' },
 
   // Modal
-  modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', padding: 16 },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    padding: 16,
+  },
+  modalScroll: {
+    width: '100%',
+  },
   modalCard: {
     width: '100%',
     backgroundColor: '#FFF',

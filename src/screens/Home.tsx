@@ -488,7 +488,6 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
           )}
         </View>
 
-        {/* (Optional) Debug info – comment out in prod */}
         {__DEV__ && (
           <View style={{ marginTop: 12, alignItems: 'center' }}>
             <Text style={{ color: theme.sub, fontSize: 12 }}>

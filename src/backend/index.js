@@ -68,8 +68,9 @@ app.get('/api/saved/:user_id', listSavedActivities);
 // POST body: { user_id, point_value, distance_km, activity_from, param_from, activity_to, param_to }
 app.post('/api/reduction', saveReduction);
 
-// ✅ Match the frontend: GET /api/reduction/:user_id
-app.get('/api/reduction/:user_id', listReductions);
+// ✅ Support BOTH paths for listing reductions
+app.get('/api/reduction/:user_id', listReductions);        // legacy
+app.get('/api/reduction/saved/:user_id', listReductions);  // new (your app was calling this)
 
 /* -------------------- Recent Activity (walking/cycling history) -------------------- */
 app.use('/api', activityRoutes);
@@ -78,8 +79,13 @@ app.use('/api', activityRoutes);
 app.get('/api/health', async (_req, res) => {
   try {
     const out = await db.query('SELECT NOW() AS now');
+    // handle mysql2 return shapes safely
     const rows = Array.isArray(out) ? out[0] : out;
-    const now = Array.isArray(rows) && rows.length ? rows[0].now : null;
+    const now =
+      Array.isArray(rows) && rows.length && (rows[0].now || rows[0].NOW)
+        ? rows[0].now || rows[0].NOW
+        : null;
+
     res.json({ ok: true, db_time: now });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e?.message || e) });
