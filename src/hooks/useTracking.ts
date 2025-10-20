@@ -8,77 +8,72 @@ import { calculateDistance } from '../utils/distance';
  * ================= Configuration =================
  */
 
-// GPS base caps
-const MAX_SPEED = 150;                 // km/h cap
-const HISTORY_SIZE = 5;                // speed smoothing (moving average)
+// Caps / windows
+const MAX_SPEED = 150;                 // km/h hard cap
+const NO_MOVE_TIMEOUT_MS = 3000;       // force speed->0 if stale
+const STATIONARY_SPEED_KMH = 0.8;
+const STATIONARY_WINDOW = 8;           // samples for stationary judge
+const STATIONARY_MOVE_SUM = 6;         // meters within window
 
-// GPS drift guards (bike/outdoor-friendly)
-const BASE_MAX_ACCURACY = 50;          // m (was 35)
-const BASE_MIN_MOVE_METERS = 5;        // m
-const BASE_SIGMA_MULT = 2.0;           // gate ~ 2 * max(acc)
+// Indoor/outdoor heuristics
+const BASE_MAX_ACCURACY = 50;          // m (outdoor target)
+const INDOOR_MAX_ACCURACY = 80;        // m (indoor-relaxed)
 
-// Indoor-relaxed thresholds
-const INDOOR_MAX_ACCURACY = 80;        // m
-const INDOOR_MIN_MOVE_METERS = 3;      // m
-const INDOOR_SIGMA_MULT = 1.5;         // gate ~ 1.5 * max(acc)
-
-// Stationary detection
-const STATIONARY_SPEED_KMH = 0.8;      // avg speed below this => stationary
-const STATIONARY_WINDOW = 8;           // last N samples
-const STATIONARY_MOVE_SUM = 6;         // total move (m) within window
-
-// Step-based fallback (indoor-friendly)
-const STRIDE_M = 0.72;                 // average step length in meters (tune per user)
-const STEP_SPEED_WINDOW_SEC = 8;       // rolling window for step speed (seconds)
-
-// Watchdog: if no movement for this long, force speed -> 0
-const NO_MOVE_TIMEOUT_MS = 3000;
+// stride & step speed window
+const STRIDE_M = 0.72;                 // TODO: read from user profile for best accuracy
+const STEP_SPEED_WINDOW_SEC = 8;       // seconds
 
 /**
- * ============== Helper types ==============
+ * ============== Helper types / utils ==============
  */
 type StepPoint = { t: number; steps: number };
 
 function isLikelyIndoor(accNow: number | undefined, recentStepGain: number): boolean {
   const acc = typeof accNow === 'number' ? accNow : 999;
+  // Loose heuristic: poor accuracy or any step signals -> likely indoor/urban canyon
   return acc >= 50 || recentStepGain > 0;
+}
+
+function clampSpeed(kmh: number): number {
+  if (!Number.isFinite(kmh) || kmh < 0) return 0;
+  return Math.min(kmh, MAX_SPEED);
 }
 
 export const useTracking = () => {
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
-  const [speed, setSpeed] = useState<number>(0);
-  const [distance, setDistance] = useState<number>(0); // km
-  const [time, setTime] = useState<number>(0);
+  const [speed, setSpeed] = useState<number>(0);      // km/h (smoothed)
+  const [distance, setDistance] = useState<number>(0); // km (accumulated)
+  const [time, setTime] = useState<number>(0);        // sec
   const [steps, setSteps] = useState<number>(0);
   const [isTracking, setIsTracking] = useState(false);
   const [subscription, setSubscription] = useState<Location.LocationSubscription | null>(null);
   const [updateCount, setUpdateCount] = useState(0);
 
-  // ---- GPS anchors ----
-  // Last fix (always advances): used for speed fallback timing and UI state
+  // Last fix (for timing/UI)
   const lastFixRef = useRef<Location.LocationObject | null>(null);
   const lastFixTsRef = useRef<number>(0);
 
-  // Distance anchor (only advances on accepted movement): used to accumulate distance robustly
+  // Distance anchor (only moves when a hop is accepted)
   const distAnchorRef = useRef<Location.LocationObject | null>(null);
 
-  // Speed smoothing (include zeros!)
-  const speedHistory = useRef<number[]>([]);
+  // Speed smoothing (IIR)
+  const lastSmoothedRef = useRef<number>(0);
 
   // Stationary detection buffers
-  const moveHistory = useRef<number[]>([]);           // displacement (m) accepted
-  const speedHistoryWindow = useRef<number[]>([]);    // speed (km/h)
+  const moveHistory = useRef<number[]>([]);
+  const speedHistoryWindow = useRef<number[]>([]);
   const isStationaryRef = useRef<boolean>(false);
 
-  // Step fallback buffers
+  // Pedometer window (for speed & distance fallback)
   const prevStepsRef = useRef<number>(0);
-  const stepWindowRef = useRef<StepPoint[]>([]);      // rolling window of (time, stepDelta)
+  const stepWindowRef = useRef<StepPoint[]>([]);   // (t, stepDelta) over recent seconds
+  const pedoSubRef = useRef<Pedometer.Subscription | null>(null);
 
-  // Watchdog to force speed -> 0 if no movement
+  // Watchdog
   const lastMovementAtRef = useRef<number>(0);
 
   /**
-   * ============== Time tracking ==============
+   * Time tracking
    */
   useEffect(() => {
     let h: ReturnType<typeof setInterval> | null = null;
@@ -87,14 +82,14 @@ export const useTracking = () => {
   }, [isTracking]);
 
   /**
-   * ============== Step tracking ==============
+   * Pedometer subscription
    */
   useEffect(() => {
-    const subscribeToPedometer = async () => {
+    const subscribe = async () => {
       const isAvailable = await Pedometer.isAvailableAsync();
       if (!isAvailable) return;
 
-      const sub = Pedometer.watchStepCount((result) => {
+      pedoSubRef.current = Pedometer.watchStepCount((result) => {
         const now = Date.now();
         const delta = Math.max(0, result.steps - prevStepsRef.current);
         prevStepsRef.current = result.steps;
@@ -109,18 +104,14 @@ export const useTracking = () => {
 
         setSteps(result.steps);
       });
-
-      pedometerSubscription.current = sub;
     };
 
-    const pedometerSubscription = { current: null as null | Pedometer.Subscription };
-    if (isTracking) subscribeToPedometer();
-
-    return () => pedometerSubscription.current?.remove();
+    if (isTracking) subscribe();
+    return () => pedoSubRef.current?.remove();
   }, [isTracking]);
 
   /**
-   * Speed from steps over a rolling window
+   * Speed from steps (rolling window)
    */
   const speedFromStepsKmh = (): number => {
     const arr = stepWindowRef.current;
@@ -134,12 +125,11 @@ export const useTracking = () => {
     const totalSteps = recent.reduce((a, b) => a + b.steps, 0);
     const dtSec = Math.max(1, (now - recent[0].t) / 1000);
     const meters = totalSteps * STRIDE_M;
-    const mps = meters / dtSec;
-    return Math.min(mps * 3.6, MAX_SPEED);
+    return clampSpeed((meters / dtSec) * 3.6);
   };
 
   /**
-   * GPS speed fallback using consecutive fixes (last fix -> new fix)
+   * Consecutive-fix speed fallback
    */
   const calculateSpeedFallback = (newLoc: Location.LocationObject, effMaxAcc: number): number => {
     if (!lastFixRef.current || lastFixTsRef.current === 0) return 0;
@@ -158,17 +148,16 @@ export const useTracking = () => {
       newLoc.coords.longitude
     ); // meters
 
-    // Use sigma gate similar to distance guard
-    const sigma = Math.max(acc1, acc2);
-    const sigmaMult = effMaxAcc > BASE_MAX_ACCURACY ? INDOOR_SIGMA_MULT : BASE_SIGMA_MULT;
-    if (dist <= Math.max(1, sigmaMult * sigma)) return 0;
+    // A light gate: at least half the combined uncertainty
+    const gate = Math.max(1, 0.5 * (acc1 + acc2));
+    if (dist <= gate) return 0;
 
     const speedKmh = (dist / timeDiff) * 3.6;
-    return Math.min(speedKmh, MAX_SPEED);
+    return clampSpeed(speedKmh);
   };
 
   /**
-   * Stationary flag update on each sample
+   * Stationary flag update
    */
   const updateStationaryFlag = (deltaMeters: number, currentSpeedKmh: number) => {
     moveHistory.current = [...moveHistory.current.slice(-STATIONARY_WINDOW + 1), Math.max(0, deltaMeters)];
@@ -187,134 +176,98 @@ export const useTracking = () => {
   };
 
   /**
-   * Core GPS handler — blends GPS + steps, robust distance, and decays speed to 0 when idle
+   * Core GPS handler — adaptive distance acceptance + single-source distance per tick
    */
   const handleLocationUpdate = (newLoc: Location.LocationObject) => {
     const now = Date.now();
-    const acc = newLoc.coords.accuracy ?? 999;
+    const accNow = newLoc.coords.accuracy ?? 999;
 
-    // Always advance "last fix" (for speed timing + UI state)
+    // always advance "last fix" for timing
     lastFixRef.current = newLoc;
     lastFixTsRef.current = newLoc.timestamp;
 
-    // Recent step gains inside the rolling window
+    // recent steps window
     const recentStepGain = stepWindowRef.current.reduce((a, b) => a + b.steps, 0);
-    const likelyIndoor = isLikelyIndoor(acc, recentStepGain);
-
-    // Choose thresholds per mode
+    const likelyIndoor = isLikelyIndoor(accNow, recentStepGain);
     const effMaxAcc = likelyIndoor ? INDOOR_MAX_ACCURACY : BASE_MAX_ACCURACY;
-    const effMinMove = likelyIndoor ? INDOOR_MIN_MOVE_METERS : BASE_MIN_MOVE_METERS;
-    const sigmaMult = likelyIndoor ? INDOOR_SIGMA_MULT : BASE_SIGMA_MULT;
 
-    // If accuracy is too poor (even for indoor), rely on steps only
-    if (acc > effMaxAcc) {
-      const spdFromSteps = speedFromStepsKmh();
+    // ===== Adaptive min-move threshold between consecutive accepted fixes =====
+    const accPrev = distAnchorRef.current?.coords.accuracy ?? accNow;
+    const adaptiveMinMove = Math.max(likelyIndoor ? 2.5 : 4, 0.5 * (accNow + accPrev)); // meters
 
-      if (spdFromSteps > 0 && recentStepGain > 0) {
-        lastMovementAtRef.current = now;
-        requestAnimationFrame(() => {
-          setSpeed(Number(spdFromSteps.toFixed(1)));
-          setDistance((prevKm) => prevKm + (recentStepGain * STRIDE_M) / 1000);
-          setUpdateCount((p) => p + 1);
-          setLocation(newLoc);
-        });
-        // Clear step window to avoid double counting
-        stepWindowRef.current.length = 0;
-      } else {
-        requestAnimationFrame(() => {
-          setSpeed(0);
-          setUpdateCount((p) => p + 1);
-          setLocation(newLoc);
-        });
-      }
-      return;
-    }
-
-    // ===== Displacement vs distance anchor (robust accumulation) =====
     let deltaMeters = 0;
 
     if (!distAnchorRef.current) {
-      distAnchorRef.current = newLoc; // set anchor at first acceptable-quality fix
+      distAnchorRef.current = newLoc;
     } else {
-      const accPrev = distAnchorRef.current.coords.accuracy ?? 999;
-      const sigma = Math.max(accPrev, acc);
-      const minMove = Math.max(effMinMove, sigmaMult * sigma);
-
-      const dist = calculateDistance(
+      const d = calculateDistance(
         distAnchorRef.current.coords.latitude,
         distAnchorRef.current.coords.longitude,
         newLoc.coords.latitude,
         newLoc.coords.longitude
       );
 
-      if (dist > minMove) {
-        deltaMeters = dist;
-        // ✅ shift the distance anchor only when movement is accepted
-        distAnchorRef.current = newLoc;
+      // accept realistic hops only; ignore crazy teleports
+      if (d >= adaptiveMinMove && d < 200) {
+        deltaMeters = d;
+        distAnchorRef.current = newLoc; // shift on every accepted hop
       }
     }
 
-    // ===== Speed from GPS (consecutive fix) or steps fallback =====
+    // ===== Speed estimation (GPS first, then fallback) =====
     const gpsSpeedMs = newLoc.coords.speed;
-    let spdKmh =
-      typeof gpsSpeedMs === 'number' && gpsSpeedMs > 0
-        ? gpsSpeedMs * 3.6
-        : calculateSpeedFallback(newLoc, effMaxAcc);
+    let spdKmh = clampSpeed(
+      typeof gpsSpeedMs === 'number' && gpsSpeedMs > 0 ? gpsSpeedMs * 3.6 : 0
+    );
 
-    if (!spdKmh || spdKmh <= 0) {
-      const spdFromSteps = speedFromStepsKmh();
-      if (spdFromSteps > 0) spdKmh = spdFromSteps;
+    if (!spdKmh) spdKmh = calculateSpeedFallback(newLoc, effMaxAcc);
+
+    const stepsKmh = speedFromStepsKmh();
+
+    // Use step fallback IFF GPS accuracy is poor OR there was no accepted GPS movement/speed
+    const useStepFallback = accNow > effMaxAcc || (!deltaMeters && !spdKmh);
+
+    if (useStepFallback && stepsKmh > 0) {
+      spdKmh = stepsKmh;
+
+      // add step distance only when GPS did not contribute distance this tick
+      if (!deltaMeters && recentStepGain > 0) {
+        setDistance((prevKm) => prevKm + (recentStepGain * STRIDE_M) / 1000);
+        stepWindowRef.current.length = 0; // avoid double count next tick
+      }
     }
 
-    // Update stationary state
-    updateStationaryFlag(deltaMeters, spdKmh || 0);
-
-    // Movement watchdog: mark last movement when we see convincing movement
+    // movement watchdog anchor
     if (deltaMeters > 0 || (spdKmh && spdKmh > STATIONARY_SPEED_KMH) || recentStepGain > 0) {
       lastMovementAtRef.current = now;
     }
 
-    // If declared stationary, prefer zero unless steps indicate otherwise
+    // stationary override
+    updateStationaryFlag(deltaMeters, spdKmh || 0);
     if (isStationaryRef.current) {
-      const spdFromSteps = speedFromStepsKmh();
-      if (spdFromSteps <= STATIONARY_SPEED_KMH) {
-        deltaMeters = 0;
+      const stepsOnlyKmh = stepsKmh;
+      if (stepsOnlyKmh <= STATIONARY_SPEED_KMH) {
         spdKmh = 0;
       } else {
-        spdKmh = spdFromSteps;
+        spdKmh = stepsOnlyKmh;
       }
     }
 
-    // ===== Smooth speed — include zeros so it can drop! =====
-    const currentSpd = Math.max(0, spdKmh || 0);
-    speedHistory.current = [...speedHistory.current.slice(-HISTORY_SIZE + 1), currentSpd];
-    const avgSpeed =
-      speedHistory.current.reduce((a, b) => a + b, 0) / speedHistory.current.length;
+    // ===== Light IIR smoothing (snappy but stable) =====
+    const ALPHA = 0.25; // 0..1 (higher = snappier)
+    let smoothed = ALPHA * (spdKmh || 0) + (1 - ALPHA) * (lastSmoothedRef.current || 0);
 
-    // ===== Batch state update with zero-decay =====
+    // decay to zero if nothing moved recently
+    if (!lastMovementAtRef.current || now - lastMovementAtRef.current > NO_MOVE_TIMEOUT_MS) {
+      smoothed = 0;
+    }
+    lastSmoothedRef.current = smoothed;
+
+    // ===== Commit state in a single frame =====
     requestAnimationFrame(() => {
-      let smoothed = Number(avgSpeed.toFixed(1));
-
-      // If no movement seen recently, force speed to zero and clear history
-      if (!lastMovementAtRef.current || now - lastMovementAtRef.current > NO_MOVE_TIMEOUT_MS) {
-        smoothed = 0;
-        speedHistory.current = [];
-      }
-
       setLocation(newLoc);
-      setSpeed(smoothed);
-
-      // Distance from accepted GPS movement
-      if (deltaMeters > 0) {
-        setDistance((prevKm) => prevKm + deltaMeters / 1000);
-      }
-
-      // If GPS didn't move but steps did => add step distance and clear window
-      if (deltaMeters === 0 && recentStepGain > 0) {
-        setDistance((prevKm) => prevKm + (recentStepGain * STRIDE_M) / 1000);
-        stepWindowRef.current.length = 0;
-      }
-
+      setSpeed(Number(clampSpeed(smoothed).toFixed(1)));
+      if (deltaMeters > 0) setDistance((prev) => prev + deltaMeters / 1000);
       setUpdateCount((p) => p + 1);
     });
   };
@@ -332,32 +285,32 @@ export const useTracking = () => {
       setSpeed(0);
       setLocation(null);
 
-      speedHistory.current = [];
+      lastSmoothedRef.current = 0;
       moveHistory.current = [];
       speedHistoryWindow.current = [];
       isStationaryRef.current = false;
 
       lastFixRef.current = null;
       lastFixTsRef.current = 0;
-
       distAnchorRef.current = null;
 
       prevStepsRef.current = 0;
       stepWindowRef.current = [];
-
       lastMovementAtRef.current = 0;
 
-      // Permissions
+      // permissions
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return;
 
-      // Watch position
+      // watch position
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.Highest,
-          distanceInterval: 2,       // indoor 1–3m, outdoor 3–10m
+          distanceInterval: 1,       // tighter hops help outdoors
           timeInterval: 1000,        // 1s updates
           mayShowUserSettingsDialog: true,
+          // @ts-ignore Expo supports this on Android; no-op on iOS
+          foregroundService: { notificationTitle: 'Tracking in progress' },
         },
         handleLocationUpdate
       );
@@ -374,24 +327,23 @@ export const useTracking = () => {
    */
   const stopTracking = () => {
     subscription?.remove();
+    pedoSubRef.current?.remove();
     setIsTracking(false);
     setSpeed(0);
-    setUpdateCount(0);
     setLocation(null);
+    setUpdateCount(0);
 
-    speedHistory.current = [];
+    lastSmoothedRef.current = 0;
     moveHistory.current = [];
     speedHistoryWindow.current = [];
     isStationaryRef.current = false;
 
     lastFixRef.current = null;
     lastFixTsRef.current = 0;
-
     distAnchorRef.current = null;
 
     prevStepsRef.current = 0;
     stepWindowRef.current = [];
-
     lastMovementAtRef.current = 0;
   };
 
