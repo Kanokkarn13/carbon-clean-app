@@ -15,6 +15,11 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 
 const screenWidth = Dimensions.get('window').width;
 
+/** layout constants */
+const SCREEN_PAD = 16;   // padding ของ container ด้านนอก
+const CARD_HPAD = 14;    // padding ซ้าย/ขวาของการ์ด
+const INNER_WIDTH = screenWidth - (SCREEN_PAD * 2) - (CARD_HPAD * 2); // กว้างด้านในจริงของการ์ด
+
 const theme = {
   primary: '#10B981',
   primaryDark: '#059669',
@@ -53,7 +58,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [activities, setActivities] = useState<any[]>([]);
   const [period, setPeriod] = useState<Period>('week');
-  const [offset, setOffset] = useState(0); // 0 = current period, -1 = previous, +1 = next
+  const [offset, setOffset] = useState(0);
   const [walkingProgress, setWalkingProgress] = useState<number>(0);
   const [cyclingProgress, setCyclingProgress] = useState<number>(0);
   const [emissionData, setEmissionData] = useState<number>(70);
@@ -63,21 +68,18 @@ export default function Dashboard() {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`http://192.168.0.104:3000/api/recent-activity/${user.user_id}`);
+        const res = await fetch(`http://192.168.0.102:3000/api/recent-activity/${user.user_id}`);
         const json = await res.json();
         const arr = Array.isArray(json.activities) ? json.activities : [];
 
-        // ✅ นอร์มัลไลซ์: ใช้ record_date เสมอ, กัน distance เป็นสตริง/NaN
         const normalized = arr.map((a: any) => {
-          const rdRaw = a.record_date ?? a.created_at ?? null; // เผื่อ API รุ่นเก่า
+          const rdRaw = a.record_date ?? a.created_at ?? null;
           const d = safeDate(rdRaw);
           return {
             ...a,
             record_date: d ? d.toISOString() : null,
             distance_km:
-              typeof a.distance_km === 'number'
-                ? a.distance_km
-                : Number(a.distance_km) || 0,
+              typeof a.distance_km === 'number' ? a.distance_km : Number(a.distance_km) || 0,
             type: a.type || 'Activity',
             title:
               (a.title && String(a.title).trim()) ||
@@ -86,7 +88,7 @@ export default function Dashboard() {
         });
 
         setActivities(normalized);
-      } catch (e) {
+      } catch {
         setActivities([]);
       } finally {
         setLoading(false);
@@ -111,7 +113,6 @@ export default function Dashboard() {
         dateKeys.push(iso(d));
       }
 
-      // init daily buckets
       const buckets: Record<string, { walking: number; cycling: number }> = {};
       dateKeys.forEach((k) => (buckets[k] = { walking: 0, cycling: 0 }));
 
@@ -132,10 +133,9 @@ export default function Dashboard() {
     }
 
     if (period === 'month') {
-      // Aggregate เดือนเป็น bin รายสัปดาห์ (W1–W5)
       const base = new Date(now.getFullYear(), now.getMonth() + offset, 1);
       const daysInMonth = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
-      const binCount = Math.ceil(daysInMonth / 7); // 4–5 bins
+      const binCount = Math.ceil(daysInMonth / 7);
       rangeLabels = Array.from({ length: binCount }, (_, i) => `W${i + 1}`);
 
       const weekBuckets = Array.from({ length: binCount }, () => ({ walking: 0, cycling: 0 }));
@@ -143,10 +143,11 @@ export default function Dashboard() {
       activities.forEach((a) => {
         const d = safeDate(a.record_date);
         if (!d) return;
-        const sameMonth = d.getFullYear() === base.getFullYear() && d.getMonth() === base.getMonth();
+        const sameMonth =
+          d.getFullYear() === base.getFullYear() && d.getMonth() === base.getMonth();
         if (!sameMonth) return;
 
-        const day = d.getDate(); // 1..daysInMonth
+        const day = d.getDate();
         const weekIdx = Math.min(Math.floor((day - 1) / 7), binCount - 1);
         const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
         if (a.type === 'Walking') weekBuckets[weekIdx].walking += dist;
@@ -160,7 +161,6 @@ export default function Dashboard() {
       };
     }
 
-    // year
     const year = now.getFullYear() + offset;
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     rangeLabels = monthNames.slice();
@@ -183,7 +183,6 @@ export default function Dashboard() {
     };
   }, [activities, period, offset]);
 
-  // overall progress (not tied to selected range)
   useEffect(() => {
     const totalWalking = activities
       .filter((a) => a.type === 'Walking')
@@ -209,7 +208,6 @@ export default function Dashboard() {
     propsForBackgroundLines: { strokeDasharray: '' },
   };
 
-  // period title text
   const periodTitle = useMemo(() => {
     const now = new Date();
     if (period === 'week') {
@@ -233,7 +231,7 @@ export default function Dashboard() {
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <ScrollView style={{ flex: 1 }}>
         <View style={styles.container}>
-          {/* Header — centered title, no overlap */}
+          {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity
               style={styles.headerSide}
@@ -243,10 +241,10 @@ export default function Dashboard() {
               <Ionicons name="arrow-back" size={22} color={theme.primary} />
             </TouchableOpacity>
             <Text style={styles.title}>Dashboard</Text>
-            <View style={styles.headerSide} />{/* spacer keeps title centered */}
+            <View style={styles.headerSide} />
           </View>
 
-          {/* Period selector */}
+          {/* Card: Line Chart */}
           <View style={styles.card}>
             <View style={styles.periodRow}>
               <View style={styles.segment}>
@@ -255,10 +253,7 @@ export default function Dashboard() {
                   return (
                     <TouchableOpacity
                       key={p}
-                      onPress={() => {
-                        setPeriod(p);
-                        setOffset(0);
-                      }}
+                      onPress={() => { setPeriod(p); setOffset(0); }}
                       style={[styles.segBtn, active && styles.segBtnActive]}
                     >
                       <Text style={[styles.segText, active && styles.segTextActive]}>
@@ -288,26 +283,28 @@ export default function Dashboard() {
                 <ActivityIndicator color={theme.primary} />
               </View>
             ) : (
-              <LineChart
-                data={{
-                  labels,
-                  datasets: [
-                    { data: wData, color: (o = 1) => `rgba(16,185,129,${o})`, strokeWidth: 2 }, // Walking
-                    { data: cData, color: (o = 1) => `rgba(251,146,60,${o})`, strokeWidth: 2 }, // Cycling
-                  ],
-                  legend: ['Walking', 'Cycling'],
-                }}
-                width={screenWidth - 32}
-                height={260}
-                chartConfig={chartConfig}
-                style={styles.chart}
-                bezier
-                fromZero
-              />
+              <View style={styles.cardChartWrap}>
+                <LineChart
+                  data={{
+                    labels,
+                    datasets: [
+                      { data: wData, color: (o = 1) => `rgba(16,185,129,${o})`, strokeWidth: 2 },
+                      { data: cData, color: (o = 1) => `rgba(251,146,60,${o})`, strokeWidth: 2 },
+                    ],
+                    legend: ['Walking', 'Cycling'],
+                  }}
+                  width={INNER_WIDTH}   // ✅ กว้างตามด้านในการ์ด
+                  height={260}
+                  chartConfig={chartConfig}
+                  style={styles.chart}
+                  bezier
+                  fromZero
+                />
+              </View>
             )}
           </View>
 
-          {/* Overall progress (not tied to selected period) */}
+          {/* Overall progress */}
           <View style={styles.progressRow}>
             <View style={styles.progressCard}>
               <Text style={styles.progressLabel}>Walk progress</Text>
@@ -319,22 +316,24 @@ export default function Dashboard() {
             </View>
           </View>
 
-          {/* Pie */}
+          {/* Card: Pie */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Emission vs Reduction</Text>
-            <PieChart
-              data={[
-                { name: 'Emission', population: Math.max(0.1, emissionData), color: '#9CA3AF', legendFontColor: '#6B7280', legendFontSize: 14 },
-                { name: 'Reduction', population: Math.max(0.1, reductionData), color: theme.primary, legendFontColor: '#6B7280', legendFontSize: 14 },
-              ]}
-              width={screenWidth - 32}
-              height={230}
-              chartConfig={{ backgroundColor: '#fff', color: (o = 1) => `rgba(0,0,0,${o})`, labelColor: () => '#000' }}
-              accessor="population"
-              backgroundColor="transparent"
-              paddingLeft="10"
-              absolute
-            />
+            <View style={styles.cardChartWrap}>
+              <PieChart
+                data={[
+                  { name: 'Emission', population: Math.max(0.1, emissionData), color: '#9CA3AF', legendFontColor: '#6B7280', legendFontSize: 14 },
+                  { name: 'Reduction', population: Math.max(0.1, reductionData), color: theme.primary, legendFontColor: '#6B7280', legendFontSize: 14 },
+                ]}
+                width={INNER_WIDTH}   // ✅ ใช้ความกว้างจริง
+                height={230}
+                chartConfig={{ backgroundColor: '#fff', color: (o = 1) => `rgba(0,0,0,${o})`, labelColor: () => '#000' }}
+                accessor="population"
+                backgroundColor="transparent"
+                paddingLeft="10"
+                absolute
+              />
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -343,7 +342,7 @@ export default function Dashboard() {
 }
 
 const styles = StyleSheet.create({
-  container: { padding: 16, paddingBottom: 32 },
+  container: { padding: SCREEN_PAD, paddingBottom: 32 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   headerSide: { width: 28, alignItems: 'flex-start' },
   title: { fontSize: 20, fontWeight: '800', color: theme.primaryDark },
@@ -351,7 +350,7 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: theme.card,
     borderRadius: 16,
-    padding: 14,
+    padding: CARD_HPAD,
     marginTop: 12,
     borderWidth: 1,
     borderColor: theme.border,
@@ -381,7 +380,17 @@ const styles = StyleSheet.create({
   navBtn: { borderWidth: 1, borderColor: theme.border, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#FFF' },
   periodTitle: { color: theme.sub, marginTop: 8, fontWeight: '700' },
 
-  chart: { borderRadius: 12, marginTop: 8 },
+  /** wrapper ที่ตัดส่วนเกินของกราฟ */
+  cardChartWrap: {
+    marginTop: 8,
+    borderRadius: 12,
+    overflow: 'hidden',      // ✅ กันกราฟล้นออกนอกการ์ด
+    backgroundColor: '#fff',
+    alignSelf: 'center',
+  },
+  chart: {
+    // ไม่ต้องกำหนด width/height ที่นี่แล้ว
+  },
 
   progressRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
   progressCard: {

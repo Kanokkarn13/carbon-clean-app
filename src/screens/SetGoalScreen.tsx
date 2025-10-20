@@ -69,7 +69,7 @@ const SetGoalScreen: React.FC = () => {
     }
 
     try {
-      const response = await fetch('http://192.168.0.104:3000/api/set-goal', {
+      const response = await fetch('http://192.168.0.102:3000/api/set-goal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

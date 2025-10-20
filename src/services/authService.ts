@@ -1,5 +1,6 @@
 // src/services/authService.ts
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /* ========= Base URL ========= */
 const getBaseUrl = () => {
@@ -9,7 +10,7 @@ const getBaseUrl = () => {
   }
   if (__DEV__) {
     if (Platform.OS === 'android') return 'http://10.0.2.2:3000'; // Android emulator -> host
-    return 'http://192.168.0.104:3000'; // iOS sim / device on LAN (adjust to your PC IP)
+    return 'http://192.168.0.102:3000'; // iOS sim / device on LAN (adjust to your PC IP)
   }
   return 'https://your-prod-domain.com';
 };
@@ -89,7 +90,7 @@ async function request<TResp, TBody = unknown>(
 
     if (!isJson) {
       console.warn('⚠️ [NON-JSON RESPONSE]', raw);
-      return raw;
+      return raw as TResp;
     }
 
     console.log('✅ [PARSED JSON]', raw);
@@ -133,8 +134,47 @@ export const setGoal = (payload: { user_id: number; goalType: 'walking' | 'bicyc
   request<BasicResponse<ApiUser>>('/api/set-goal', payload);
 
 /* ========= Helper ========= */
-export function pickUser(resp: AuthResponse | BasicResponse<ApiUser> | null | undefined): ApiUser | null {
+export function pickUser(
+  resp: AuthResponse | BasicResponse<ApiUser> | null | undefined
+): ApiUser | null {
   if (!resp) return null;
   // @ts-ignore
   return (resp as any).data || (resp as any).user || null;
+}
+
+/* ========= Storage Helpers (NEW) ========= */
+// Keys
+const USER_KEY = 'user';
+const TOKEN_KEY = 'token';
+
+/** Save user (and optional token) after login/register */
+export async function saveUser(user: ApiUser | any, token?: string) {
+  await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (token) await AsyncStorage.setItem(TOKEN_KEY, token);
+}
+
+/** Get the persisted user for screens like Profile */
+export async function getUser(): Promise<ApiUser | any | null> {
+  try {
+    const json = await AsyncStorage.getItem(USER_KEY);
+    if (!json) return null;
+    return JSON.parse(json);
+  } catch (err) {
+    console.error('Failed to load user from storage:', err);
+    return null;
+  }
+}
+
+/** Get saved auth token, if you use one */
+export async function getToken(): Promise<string | null> {
+  try {
+    return (await AsyncStorage.getItem(TOKEN_KEY)) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Clear user + token */
+export async function logout() {
+  await AsyncStorage.multiRemove([USER_KEY, TOKEN_KEY]);
 }

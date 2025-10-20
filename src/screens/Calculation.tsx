@@ -1,5 +1,4 @@
-// src/screens/Calculation.tsx
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   ActivityIndicator, RefreshControl
@@ -7,6 +6,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute } from '@react-navigation/native';
+
+import { useCalculationData } from '../hooks/useCalculationData';
+import EmissionCard from '../components/EmissionCard';
+import ReductionCard from '../components/ReductionCard';
+import type { SavedRow, ReductionRow } from '../types/calc';
 
 const theme = {
   primary: '#10B981',
@@ -16,223 +20,22 @@ const theme = {
   text: '#0B1721',
   sub: '#6B7280',
   border: '#E5E7EB',
-  danger: '#DC2626', // red for emission total
+  danger: '#DC2626',
 };
-
-// ---- API origin (DON'T put /api in ENV) ----
-const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.104:3000';
-const api = (path: string) => `${API_ORIGIN}/api${path}`;
-
-type User = {
-  user_id?: string | number;
-  id?: string | number;
-  fname?: string;
-  lname?: string;
-  email?: string;
-  House_member?: number | string;
-  house_member?: number | string;
-};
-
-// ---- Emission rows (from /api/saved/:user_id) ----
-type SavedRow = {
-  id: number;
-  user_id: number;
-  point_value: string;
-  distance_km: string | number;
-  activity: 'Car' | 'Motorcycle' | 'Taxi' | 'Bus';
-  param_type: string | null;
-  create_at?: string;
-};
-
-// ---- Reduction rows (from /api/reduction/saved/:user_id) ----
-type ReductionRow = {
-  id: number;
-  user_id: number;
-  point_value: string;          // saved reduction (string)
-  distance_km: string | number; // DECIMAL
-  activity_from: string;
-  param_from: string | null;
-  activity_to: string;
-  param_to: string | null;
-  create_at?: string;
-};
-
-function parsePositiveInt(v: unknown): number | undefined {
-  const n = Number(v);
-  if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  return undefined;
-}
-function getMembersFrom(obj: any): number | undefined {
-  if (!obj || typeof obj !== 'object') return undefined;
-  const keys = ['house_member', 'House_member', 'houseMember', 'members', 'member_count'];
-  for (const k of keys) {
-    const p = parsePositiveInt(obj?.[k]);
-    if (p !== undefined) return p;
-  }
-  return undefined;
-}
-
-function EmissionCard({ item }: { item: SavedRow }) {
-  const dateStr = item.create_at ? new Date(item.create_at).toISOString().slice(0, 10) : '';
-  return (
-    <View style={styles.savedCard}>
-      <Text style={styles.savedCardTitle}>
-        {item.activity}{item.param_type ? ` · ${item.param_type}` : ''}
-      </Text>
-      <Text style={styles.savedCardLine}>
-        Distance: <Text style={styles.savedCardStrong}>{Number(item.distance_km).toFixed(2)} km</Text>
-      </Text>
-      <Text style={styles.savedCardLine}>
-        Emission: <Text style={[styles.savedCardStrong, styles.emissionRed]}>{Number(item.point_value).toFixed(2)} kgCO₂e</Text>
-      </Text>
-      {!!dateStr && <Text style={styles.savedCardDate}>{dateStr}</Text>}
-    </View>
-  );
-}
-
-function ReductionCard({ item }: { item: ReductionRow }) {
-  const dateStr = item.create_at ? new Date(item.create_at).toISOString().slice(0, 10) : '';
-  return (
-    <View style={styles.savedCard}>
-      <Text style={styles.savedCardTitle}>
-        {item.activity_from} → {item.activity_to}
-      </Text>
-      {(item.param_from || item.param_to) ? (
-        <Text style={styles.savedCardLine}>
-          {item.param_from ?? '—'} → {item.param_to ?? '—'}
-        </Text>
-      ) : null}
-      {Number(item.distance_km) > 0 && (
-        <Text style={styles.savedCardLine}>
-          Distance: <Text style={styles.savedCardStrong}>{Number(item.distance_km).toFixed(2)} km</Text>
-        </Text>
-      )}
-      <Text style={styles.savedCardLine}>
-        Saved: <Text style={styles.savedCardStrong}>{Number(item.point_value).toFixed(2)} kgCO₂e</Text>
-      </Text>
-      {!!dateStr && <Text style={styles.savedCardDate}>{dateStr}</Text>}
-    </View>
-  );
-}
 
 const Calculation = ({ navigation }: any) => {
   const route = useRoute<any>();
-  const params = route?.params || {};
-  const user: User = params?.user || {};
 
-  const userId = useMemo(() => Number(user?.user_id ?? user?.id), [user]);
-  const members = getMembersFrom(user) ?? getMembersFrom(params) ?? 1;
-  const peopleLabel = `${members} person${members === 1 ? '' : 's'}`;
+  const {
+    user,
+    peopleLabel,
 
-  // -------- Emission state --------
-  const [openSaved, setOpenSaved] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [savingError, setSavingError] = useState<string | null>(null);
-  const [items, setItems] = useState<SavedRow[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [totalEmission, setTotalEmission] = useState<number>(0);
+    openSaved, setOpenSaved,
+    loading, savingError, items, refreshing, totalEmission, onRefresh,
 
-  // -------- Reduction state --------
-  const [openReduce, setOpenReduce] = useState(false);
-  const [loadingReduce, setLoadingReduce] = useState(false);
-  const [reduceError, setReduceError] = useState<string | null>(null);
-  const [reduceItems, setReduceItems] = useState<ReductionRow[]>([]);
-  const [refreshingReduce, setRefreshingReduce] = useState(false);
-  const [totalReduction, setTotalReduction] = useState<number>(0);
-
-  // ----- fetch Emission -----
-  const fetchSaved = useCallback(async () => {
-    if (!userId || userId <= 0) {
-      setSavingError('Login required to load saved emissions.');
-      setItems([]);
-      setTotalEmission(0);
-      return;
-    }
-    setSavingError(null);
-    setLoading(true);
-    try {
-      const res = await fetch(api(`/saved/${userId}`));
-      const text = await res.text();
-      if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-      const json = text ? JSON.parse(text) : { items: [] };
-      const list: SavedRow[] = Array.isArray(json?.items) ? json.items : [];
-      setItems(list);
-      const total = list.reduce((sum, it) => sum + Number(it.point_value || 0), 0);
-      setTotalEmission(total);
-    } catch (e: any) {
-      setSavingError(e?.message || 'Failed to load');
-      setItems([]);
-      setTotalEmission(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [userId]);
-
-  // ----- fetch Reduction -----
-  const fetchReductions = useCallback(async () => {
-    if (!userId || userId <= 0) {
-      setReduceError('Login required to load saved reductions.');
-      setReduceItems([]);
-      setTotalReduction(0);
-      return;
-    }
-    setReduceError(null);
-    setLoadingReduce(true);
-    try {
-      const url = api(`/reduction/saved/${userId}`); // must match server route
-      const res = await fetch(url);
-      const text = await res.text();
-      console.log('[fetchReductions] GET', url, 'status:', res.status, 'body:', text);
-      if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-      const json = text ? JSON.parse(text) : { items: [] };
-      const list: ReductionRow[] = Array.isArray(json?.items) ? json.items : [];
-      setReduceItems(list);
-      const total = list.reduce((sum, it) => sum + Number(it.point_value || 0), 0);
-      setTotalReduction(total);
-    } catch (e: any) {
-      setReduceError(e?.message || 'Failed to load reductions');
-      setReduceItems([]);
-      setTotalReduction(0);
-    } finally {
-      setLoadingReduce(false);
-    }
-  }, [userId]);
-
-  // ✅ preload emission & reduction once so both totals show immediately
-  useEffect(() => {
-    fetchSaved();
-  }, [fetchSaved]);
-
-  useEffect(() => {
-    fetchReductions();
-  }, [fetchReductions]);
-
-  // lazy-load lists only when opening the "Saved" panels
-  useEffect(() => {
-    if (openSaved && items.length === 0 && !loading) fetchSaved();
-  }, [openSaved, items.length, loading, fetchSaved]);
-
-  useEffect(() => {
-    if (openReduce && reduceItems.length === 0 && !loadingReduce) fetchReductions();
-  }, [openReduce, reduceItems.length, loadingReduce, fetchReductions]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await fetchSaved();
-    } finally {
-      setRefreshing(false);
-    }
-  }, [fetchSaved]);
-
-  const onRefreshReduce = useCallback(async () => {
-    setRefreshingReduce(true);
-    try {
-      await fetchReductions();
-    } finally {
-      setRefreshingReduce(false);
-    }
-  }, [fetchReductions]);
+    openReduce, setOpenReduce,
+    loadingReduce, reduceError, reduceItems, refreshingReduce, totalReduction, onRefreshReduce,
+  } = useCalculationData(route?.params?.user, route?.params);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -261,7 +64,7 @@ const Calculation = ({ navigation }: any) => {
             : undefined
         }
       >
-        {/* Card 1 — Calculate Emission */}
+        {/* Emission Card */}
         <View style={styles.card}>
           <View style={styles.cardTopRow}>
             <View style={{ flex: 1 }}>
@@ -299,7 +102,7 @@ const Calculation = ({ navigation }: any) => {
             <TouchableOpacity
               style={styles.toggleBtn}
               activeOpacity={0.8}
-              onPress={() => setOpenSaved(s => !s)}
+              onPress={() => setOpenSaved((s: boolean) => !s)}
             >
               <Text style={styles.toggleText}>Saved</Text>
               <Ionicons
@@ -310,7 +113,6 @@ const Calculation = ({ navigation }: any) => {
             </TouchableOpacity>
           </View>
 
-          {/* Saved emission list */}
           {openSaved && (
             <View style={styles.savedWrap}>
               <View style={styles.savedRowHeader}>
@@ -331,15 +133,21 @@ const Calculation = ({ navigation }: any) => {
               ) : items.length === 0 ? (
                 <Text style={styles.emptyText}>No saved items yet</Text>
               ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.savedScroller}>
-                  {items.map((it) => <EmissionCard key={it.id} item={it} />)}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.savedScroller}
+                >
+                  {items.map((row: SavedRow) => (
+                    <EmissionCard key={row.id} item={row} />
+                  ))}
                 </ScrollView>
               )}
             </View>
           )}
         </View>
 
-        {/* Card 2 — Reduce Carbon */}
+        {/* Reduction Card */}
         <View style={styles.card}>
           <View style={styles.cardTopRow}>
             <View>
@@ -378,7 +186,7 @@ const Calculation = ({ navigation }: any) => {
             <TouchableOpacity
               style={styles.toggleBtn}
               activeOpacity={0.8}
-              onPress={() => setOpenReduce(s => !s)}
+              onPress={() => setOpenReduce((s: boolean) => !s)}
             >
               <Text style={styles.toggleText}>Saved</Text>
               <Ionicons
@@ -389,7 +197,6 @@ const Calculation = ({ navigation }: any) => {
             </TouchableOpacity>
           </View>
 
-          {/* Saved reduction list */}
           {openReduce && (
             <View style={styles.savedWrap}>
               <View style={styles.savedRowHeader}>
@@ -410,8 +217,14 @@ const Calculation = ({ navigation }: any) => {
               ) : reduceItems.length === 0 ? (
                 <Text style={styles.emptyText}>No reductions saved yet</Text>
               ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.savedScroller}>
-                  {reduceItems.map((it) => <ReductionCard key={it.id} item={it} />)}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.savedScroller}
+                >
+                  {reduceItems.map((row: ReductionRow) => (
+                    <ReductionCard key={row.id} item={row} />
+                  ))}
                 </ScrollView>
               )}
             </View>
@@ -482,10 +295,8 @@ const styles = StyleSheet.create({
 
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
   label: { fontSize: 14, color: theme.text, fontWeight: '700' },
-  labelMuted: { fontSize: 13, color: theme.sub, fontWeight: '700' },
 
   valueBold: { fontSize: 16, fontWeight: '800', color: theme.text },
-  valueMuted: { fontSize: 14, color: theme.sub, fontWeight: '600', marginTop: 2 },
   valueGreen: { fontSize: 16, fontWeight: '800', color: theme.primaryDark },
   valueDanger: { color: theme.danger },
 
@@ -519,19 +330,8 @@ const styles = StyleSheet.create({
   },
   toggleText: { color: theme.primaryDark, fontWeight: '800' },
 
-  // saved section common
-  savedWrap: {
-    marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-    paddingTop: 10,
-  },
-  savedRowHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
+  savedWrap: { marginTop: 12, borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 10 },
+  savedRowHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   savedTitle: { fontSize: 16, fontWeight: '800', color: theme.text },
 
   rowRefresh: {
@@ -552,20 +352,5 @@ const styles = StyleSheet.create({
   errorText: { color: '#B91C1C', fontWeight: '700' },
   emptyText: { color: theme.sub, fontWeight: '600' },
 
-  // horizontal cards
   savedScroller: { paddingVertical: 6, gap: 12 },
-  savedCard: {
-    width: 240,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 14,
-    padding: 12,
-    marginRight: 12,
-  },
-  savedCardTitle: { fontWeight: '800', color: theme.text, marginBottom: 6 },
-  savedCardLine: { color: theme.sub, marginTop: 2, fontSize: 12 },
-  savedCardStrong: { color: theme.primaryDark, fontWeight: '800' },
-  emissionRed: { color: theme.danger },
-  savedCardDate: { color: theme.sub, fontSize: 11, marginTop: 6 },
 });

@@ -1,23 +1,39 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
-  StyleSheet,
   Image,
-  Alert,
+  StyleSheet,
   TouchableOpacity,
   ScrollView,
-  SafeAreaView,
+  ActivityIndicator,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  useNavigation,
+  useRoute,
+  useFocusEffect,
+  RouteProp,
+} from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
-import { updateUser } from '../services/authService';
-import { emissionData } from '../hooks/calculateEmission';
+import { getUser } from '../services/authService';
+
+// =========================
+// Types & Theme
+// =========================
+type Navigation = NativeStackNavigationProp<any>;
+
+// Type the route so route.params?.user is known to TS and safe at runtime
+type ProfileStackParamList = {
+  ProfileMain: { user: any } | undefined;
+  ProfileEdit: { user: any } | undefined;
+};
 
 const theme = {
-  primary: '#10B981',
-  primaryDark: '#059669',
+  green: '#22C55E',
+  greenDark: '#16A34A',
+  blue: '#3B82F6',
   bg: '#F6FAF8',
   card: '#FFFFFF',
   text: '#0B1721',
@@ -25,337 +41,367 @@ const theme = {
   border: '#E5E7EB',
 };
 
-const VEHICLE_TYPES = ['Cars', 'Motorbike', 'Bus', 'Taxis'] as const;
-const FUEL_TYPES = ['Petrol', 'Diesel', 'Unknown'] as const;
+// =========================
+// Config
+// =========================
+const API_BASE = 'http://192.168.0.102:3000';
+const FAKE_CARBON_KG = 0.14 as const;
 
-function Card({ children, title, icon }: { children: React.ReactNode; title: string; icon: keyof typeof Ionicons.glyphMap }) {
-  return (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <Ionicons name={icon} size={18} color={theme.primary} />
-        <Text style={styles.cardTitle}>{title}</Text>
-      </View>
-      {children}
-    </View>
-  );
-}
+// =========================
+// Component
+// =========================
+export default function ProfileScreen() {
+  const navigation = useNavigation<Navigation>();
+  const route = useRoute<RouteProp<ProfileStackParamList, 'ProfileMain'>>();
+  const routeUser = route.params?.user ?? null;
 
-function Chip({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active?: boolean;
-  onPress?: () => void;
-}) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[styles.chip, active && styles.chipActive]}
-      activeOpacity={0.85}
-    >
-      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
+  const [user, setUser] = useState<any | null>(routeUser);
+  const [loading, setLoading] = useState(true);
+  const [activities, setActivities] = useState<any[]>([]);
+  const [mode, setMode] = useState<'sum' | 'walk' | 'cycle'>('sum');
 
-function ChipGroup({
-  options,
-  value,
-  onChange,
-  scrollable = false,
-}: {
-  options: string[];
-  value: string;
-  onChange: (v: string) => void;
-  scrollable?: boolean;
-}) {
-  const content = options.map(opt => (
-    <Chip key={opt} label={opt} active={opt === value} onPress={() => onChange(opt)} />
-  ));
-  if (!scrollable) return <View style={styles.chipRow}>{content}</View>;
-  return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-      {content}
-    </ScrollView>
-  );
-}
-
-function LabeledInput(props: React.ComponentProps<typeof TextInput> & { label: string }) {
-  const { label, style, ...rest } = props;
-  return (
-    <View style={{ marginTop: 12 }}>
-      <Text style={styles.label}>{label}</Text>
-      <View style={styles.inputWrap}>
-        <TextInput {...rest} style={[styles.input, style]} placeholderTextColor={theme.sub} />
-      </View>
-    </View>
-  );
-}
-
-const ProfileScreen = ({ route }: { route: any }) => {
-  const navigation = useNavigation();
-  const { user } = route.params;
-
-  const [fname, setName] = useState(user.fname);
-  const [lname, setLname] = useState(user.lname);
-  const [email, setEmail] = useState(user.email);
-  const [phone, setPhone] = useState(user.phone);
-  const [houseMember, setHouseMember] = useState(
-    user.house_member ? String(user.house_member) : ''
-  );
-
-  const [vehicleType, setVehicleType] = useState<(typeof VEHICLE_TYPES)[number]>('Cars');
-  const [fuelType, setFuelType] = useState<(typeof FUEL_TYPES)[number]>('Petrol');
-  const [vehicleClass, setVehicleClass] = useState<string>('Small car');
-
-  // Initialize from user.vehicle "Type,Fuel,Size"
-  useEffect(() => {
-    if (!user?.vehicle) return;
-    const [type, fuel, size] = String(user.vehicle).split(',');
-    if (type) setVehicleType(type as any);
-    if (fuel) setFuelType(fuel as any);
-    if (size) setVehicleClass(type === 'Cars' ? `${size} car` : size);
-  }, [user?.vehicle]);
-
-  const getFuelOptions = (type: string) => (type === 'Cars' ? FUEL_TYPES : (['Unknown'] as const));
-  const getClassOptions = (type: string, fuel: string) =>
-    type === 'Cars'
-      ? Object.keys(emissionData[fuel] || {})
-      : Object.keys(emissionData[type] || {});
-
-  const classOptions = useMemo(
-    () => getClassOptions(vehicleType, fuelType),
-    [vehicleType, fuelType]
-  );
-
-  const onChangeVehicleType = (t: (typeof VEHICLE_TYPES)[number]) => {
-    setVehicleType(t);
-    const fuels = getFuelOptions(t);
-    const newFuel = fuels[0] as any;
-    setFuelType(newFuel);
-    const firstClass = getClassOptions(t, newFuel)[0] || '';
-    setVehicleClass(firstClass);
-  };
-
-  const onChangeFuel = (f: (typeof FUEL_TYPES)[number]) => {
-    setFuelType(f);
-    const firstClass = getClassOptions('Cars', f)[0] || '';
-    setVehicleClass(firstClass);
-  };
-
-  const onChangeClass = (cls: string) => setVehicleClass(cls);
-
-  const handleSave = async () => {
-    const vehicleString =
-      vehicleType === 'Cars'
-        ? `${vehicleType},${fuelType},${vehicleClass.replace(' car', '')}`
-        : `${vehicleType},Unknown,${vehicleClass}`;
-
-    const userData = {
-      user_id: user.user_id,
-      fname,
-      lname,
-      email,
-      phone,
-      vehicle: vehicleString,
-      house_member: parseInt(houseMember || '0', 10),
-    };
-
+  // -------------------------
+  // Load user + activities
+  // -------------------------
+  const loadAll = async () => {
+    setLoading(true);
     try {
-      await updateUser(userData);
-      Alert.alert('Success', 'Profile updated successfully.');
-    } catch (error) {
-      console.error('❌ Failed to update user:', error);
-      Alert.alert('Error', 'Failed to update profile.');
+      // fall back to local storage / backend if route didn’t carry the user
+      const u = routeUser ?? (await getUser());
+      setUser(u || null);
+
+      if (u?.user_id) {
+        const res = await fetch(`${API_BASE}/api/recent-activity/${u.user_id}`);
+        const json = await res.json();
+        const arr = Array.isArray(json.activities) ? json.activities : [];
+        setActivities(
+          arr.map((a: any) => ({
+            ...a,
+            distance_km: Number(a.distance_km) || 0,
+            type: a.type || 'Activity',
+          }))
+        );
+      } else {
+        setActivities([]);
+      }
+    } catch (e) {
+      console.error('❌ Failed to load profile data:', e);
+      setActivities([]);
+    } finally {
+      setLoading(false);
     }
   };
 
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeUser]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadAll();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+  );
+
+  // -------------------------
+  // Compute progress values
+  // -------------------------
+  const { walkingPct, cyclingPct, totalWalkKm, totalCycleKm } = useMemo(() => {
+    const totalWalk = activities
+      .filter((a) => a.type === 'Walking')
+      .reduce((s, a) => s + a.distance_km, 0);
+    const totalCycle = activities
+      .filter((a) => a.type === 'Cycling')
+      .reduce((s, a) => s + a.distance_km, 0);
+
+    const walkGoal = Math.max(1, Number(user?.walk_goal) || 100);
+    const cycleGoal = Math.max(1, Number(user?.bic_goal) || 100);
+
+    return {
+      walkingPct: Math.min((totalWalk / walkGoal) * 100, 100),
+      cyclingPct: Math.min((totalCycle / cycleGoal) * 100, 100),
+      totalWalkKm: totalWalk,
+      totalCycleKm: totalCycle,
+    };
+  }, [activities, user]);
+
+  // -------------------------
+  // Loading & Empty states
+  // -------------------------
+  if (loading)
+    return (
+      <SafeAreaView style={styles.centered}>
+        <ActivityIndicator size="large" color={theme.greenDark} />
+      </SafeAreaView>
+    );
+
+  if (!user)
+    return (
+      <SafeAreaView style={styles.centered}>
+        <Text style={styles.empty}>No user data available</Text>
+        <TouchableOpacity onPress={loadAll} style={styles.reloadBtn} activeOpacity={0.9}>
+          <Text style={styles.reloadText}>Reload</Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+
+  // -------------------------
+  // Fake carbon + distance
+  // -------------------------
+  const carbonKg = FAKE_CARBON_KG;
+  const trees = Math.floor(carbonKg / 50);
+  const stadiumRounds = Math.round((totalWalkKm + totalCycleKm) / 0.4);
+
+  // -------------------------
+  // Render UI
+  // -------------------------
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        {/* Header with Back */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Ionicons name="arrow-back" size={24} color={theme.primary} />
-          </TouchableOpacity>
-          <Text style={styles.title}>Profile</Text>
-        </View>
+      <ScrollView contentContainerStyle={styles.container}>
+        {/* === Header === */}
+        <Text style={styles.header}>Profile</Text>
 
-        {/* Avatar card */}
-        <Card title="Your Info" icon="person-circle-outline">
+        {/* === Profile Card === */}
+        <View style={styles.profileCard}>
           <Image
             source={{
               uri:
-                user.profile_picture ||
-                'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+                user?.profile_picture ||
+                'https://preview.redd.it/help-me-find-instagram-account-of-this-cat-he-she-looks-so-v0-twu4der3mpud1.jpg?width=640&crop=smart&auto=webp&s=e50ba618c5b563dc1dc37dc98e6fb8c29276dafd',
             }}
-            style={styles.avatar}
+            style={styles.profileImage}
           />
-          <LabeledInput label="First Name" value={fname} onChangeText={setName} placeholder="First name" />
-          <LabeledInput label="Last Name" value={lname} onChangeText={setLname} placeholder="Last name" />
-          <LabeledInput
-            label="Email"
-            value={email}
-            onChangeText={setEmail}
-            placeholder="Email"
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
-          <LabeledInput
-            label="Phone"
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="Phone"
-            keyboardType="phone-pad"
-          />
-          <LabeledInput
-            label="Household Members"
-            value={houseMember}
-            onChangeText={setHouseMember}
-            placeholder="Number of people"
-            keyboardType="numeric"
-          />
-        </Card>
+          <Text style={styles.userName}>
+            {user?.fname ?? ''} {user?.lname ?? ''}
+          </Text>
 
-        {/* Vehicle preferences */}
-        <Card title="Vehicle Preference" icon="car-outline">
-          <Text style={styles.label}>Vehicle Type</Text>
-          <ChipGroup
-            options={VEHICLE_TYPES as unknown as string[]}
-            value={vehicleType}
-            onChange={(v) => onChangeVehicleType(v as any)}
-            scrollable
-          />
+          <View style={styles.pointChip}>
+            <Text style={styles.pointText}>{user?.points ?? 0} P</Text>
+          </View>
 
-          {vehicleType === 'Cars' && (
-            <>
-              <Text style={[styles.label, { marginTop: 12 }]}>Fuel Type</Text>
-              <ChipGroup
-                options={getFuelOptions('Cars') as unknown as string[]}
-                value={fuelType}
-                onChange={(v) => onChangeFuel(v as any)}
-              />
-            </>
+          <TouchableOpacity
+            style={styles.editBtn}
+            activeOpacity={0.9}
+            onPress={() => navigation.navigate('ProfileEdit', { user })}
+          >
+            <Text style={styles.editBtnText}>Edit Profile</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* === Progress Section === */}
+        <View style={styles.progressSection}>
+          <View style={styles.progressHeaderRow}>
+            <Text style={styles.progressHeader}>Your Progress</Text>
+
+            {/* Toggle Switch */}
+            <View style={styles.toggleContainer}>
+              {(['sum', 'walk', 'cycle'] as const).map((key) => (
+                <TouchableOpacity
+                  key={key}
+                  onPress={() => setMode(key)}
+                  style={[
+                    styles.toggleBtn,
+                    mode === key && { backgroundColor: theme.green },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.toggleText,
+                      { color: mode === key ? '#fff' : theme.text },
+                    ]}
+                  >
+                    {key === 'sum' ? 'Sum' : key === 'walk' ? 'Walking' : 'Cycling'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Carbon */}
+          {mode === 'sum' && (
+            <View style={styles.progressRow}>
+              <View style={[styles.iconWrap, { backgroundColor: '#DCFCE7' }]}>
+                <Ionicons name="leaf-outline" size={20} color={theme.greenDark} />
+              </View>
+              <View style={styles.progressTextWrap}>
+                <Text style={[styles.progressNumber, { color: theme.greenDark }]}>
+                  {formatNum(carbonKg)} Kg
+                </Text>
+                <Text style={styles.progressDesc}>
+                  You have saved {formatNum(carbonKg)} Kg of carbon! That’s equivalent to {trees}{' '}
+                  {trees === 1 ? 'tree' : 'trees'} planted.
+                </Text>
+              </View>
+            </View>
           )}
 
-          <Text style={[styles.label, { marginTop: 12 }]}>Vehicle Class</Text>
-          <ChipGroup
-            options={classOptions}
-            value={vehicleClass}
-            onChange={onChangeClass}
-            scrollable
-          />
-        </Card>
+          {/* Walk/Cycle Progress */}
+          {(mode === 'sum' || mode === 'walk' || mode === 'cycle') && (
+            <View style={styles.dualRow}>
+              {(mode === 'sum' || mode === 'walk') && (
+                <View style={styles.progressCard}>
+                  <View style={[styles.iconWrapSmall, { backgroundColor: '#DCFCE7' }]}>
+                    <Ionicons name="walk-outline" size={18} color={theme.greenDark} />
+                  </View>
+                  <Text style={styles.cardLabel}>Walking progress</Text>
+                  <Text style={[styles.cardValue, { color: theme.greenDark }]}>
+                    {walkingPct.toFixed(1)}%
+                  </Text>
+                </View>
+              )}
+              {(mode === 'sum' || mode === 'cycle') && (
+                <View style={styles.progressCard}>
+                  <View style={[styles.iconWrapSmall, { backgroundColor: '#EAF2FE' }]}>
+                    <Ionicons name="bicycle-outline" size={18} color={theme.blue} />
+                  </View>
+                  <Text style={styles.cardLabel}>Cycling progress</Text>
+                  <Text style={[styles.cardValue, { color: theme.blue }]}>
+                    {cyclingPct.toFixed(1)}%
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
-        <TouchableOpacity style={styles.primaryBtn} onPress={handleSave} activeOpacity={0.9}>
-          <Text style={styles.primaryBtnText}>Save Changes</Text>
-        </TouchableOpacity>
+          {/* Distance */}
+          {mode === 'sum' && (
+            <View style={styles.progressRow}>
+              <View style={[styles.iconWrap, { backgroundColor: '#EAF2FE' }]}>
+                <Ionicons name="location-outline" size={20} color={theme.blue} />
+              </View>
+              <View style={styles.progressTextWrap}>
+                <Text style={[styles.progressNumber, { color: theme.blue }]}>
+                  {formatNum(totalWalkKm + totalCycleKm)} km
+                </Text>
+                <Text style={styles.progressDesc}>
+                  You have travelled {formatNum(totalWalkKm + totalCycleKm)} Km — around {stadiumRounds} stadium rounds!
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
-};
+}
 
+// =========================
+// Helper
+// =========================
+function formatNum(n?: number) {
+  const num = Number(n ?? 0);
+  return num < 10 ? num.toFixed(2) : num.toFixed(1);
+}
+
+// =========================
+// Styles
+// =========================
 const styles = StyleSheet.create({
-  container: {
-    padding: 20,
-    paddingBottom: 44,
+  centered: {
+    flex: 1,
+    backgroundColor: theme.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  empty: { color: theme.sub, fontWeight: '700' },
+  reloadBtn: {
+    marginTop: 12,
+    backgroundColor: theme.green,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  reloadText: { color: '#fff', fontWeight: '700' },
+
+  container: { alignItems: 'center', paddingHorizontal: 20, paddingBottom: 48 },
   header: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: theme.text,
+    marginTop: 10,
+    marginBottom: 18,
+  },
+
+  profileCard: { alignItems: 'center', marginBottom: 28 },
+  profileImage: {
+    width: 140,
+    height: 140,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: theme.green,
+    resizeMode: 'cover',
+    marginBottom: 14,
+  },
+  userName: { fontSize: 18, fontWeight: '800', color: theme.text, marginBottom: 8 },
+  pointChip: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    marginBottom: 16,
+  },
+  pointText: { color: theme.text, fontWeight: '800' },
+  editBtn: {
+    backgroundColor: theme.green,
+    borderRadius: 999,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+  },
+  editBtnText: { color: '#FFF', fontWeight: '800', fontSize: 16 },
+
+  progressSection: { width: '100%' },
+  progressHeaderRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 14,
   },
-  title: {
-    marginLeft: 10,
-    fontSize: 20,
-    fontWeight: '700',
-    color: theme.primaryDark,
-  },
-  card: {
-    backgroundColor: theme.card,
-    borderRadius: 16,
-    padding: 16,
-    marginTop: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-  cardHeader: {
+  progressHeader: { fontSize: 18, fontWeight: '800', color: theme.text },
+  toggleContainer: {
     flexDirection: 'row',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 20,
+    padding: 2,
+  },
+  toggleBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    marginHorizontal: 2,
+  },
+  toggleText: { fontSize: 12, fontWeight: '700' },
+
+  progressRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 14 },
+  iconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    justifyContent: 'center',
   },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: theme.text,
+  progressTextWrap: { marginLeft: 10, flex: 1 },
+  progressNumber: { fontSize: 16, fontWeight: '800', marginBottom: 2 },
+  progressDesc: { fontSize: 13, color: theme.sub },
+
+  dualRow: { flexDirection: 'row', gap: 12, marginBottom: 10 },
+  progressCard: {
+    flex: 1,
+    backgroundColor: theme.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    padding: 14,
+    alignItems: 'center',
   },
-  avatar: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    alignSelf: 'center',
-    marginBottom: 16,
-  },
-  label: {
-    color: theme.sub,
-    fontSize: 13,
+  iconWrapSmall: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 6,
   },
-  inputWrap: {
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 12,
-    backgroundColor: '#FFF',
-  },
-  input: {
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    fontSize: 16,
-    color: theme.text,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: '#FFF',
-  },
-  chipActive: {
-    backgroundColor: theme.primary,
-    borderColor: theme.primary,
-  },
-  chipText: {
-    color: theme.text,
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  chipTextActive: {
-    color: '#FFF',
-  },
-  primaryBtn: {
-    marginTop: 20,
-    backgroundColor: theme.primary,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  primaryBtnText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  cardLabel: { color: theme.sub, fontWeight: '700' },
+  cardValue: { fontSize: 20, fontWeight: '800', marginTop: 2 },
 });
-
-export default ProfileScreen;

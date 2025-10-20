@@ -4,6 +4,7 @@ const db = require('../config/db');
 const ACTIVITY_TABLE = process.env.ACTIVITY_TABLE || 'e_point';
 const ALLOWED = new Set(['Car', 'Motorcycle', 'Taxi', 'Bus']);
 
+/* ---------- helpers ---------- */
 function badRequest(res, details) {
   return res.status(400).json({ error: 'Invalid payload', details });
 }
@@ -26,6 +27,14 @@ const buildParamType = (parameters = {}) => {
   return s || null;
 };
 
+// Generate a MySQL DATETIME (YYYY-MM-DD HH:mm:ss) in GMT+7
+function nowGMT7() {
+  const now = new Date();
+  const gmt7 = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  return gmt7.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/* ---------- POST /api/emission/transport ---------- */
 exports.saveTransportEmission = async (req, res) => {
   try {
     const b = req.body || {};
@@ -47,15 +56,19 @@ exports.saveTransportEmission = async (req, res) => {
     const point_value = toPointValue(emission_kgco2e); // store emission as string
     const param_type = buildParamType(parameters);
 
-    // ⬇️ activity is now ONLY the label (no distance/params)
+    // activity is just the label (no distance/params)
     const activity = activity_type;
+
+    // ✅ Use GMT+7 from code (no CURDATE()/NOW())
+    const createAt = nowGMT7();
+    const updateAt = createAt;
 
     const sql = `
       INSERT INTO \`${ACTIVITY_TABLE}\`
         (user_id, point_value, distance_km, activity, param_type, create_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, CURDATE(), CURDATE())
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
-    const params = [user_id, point_value, distance_km, activity, param_type];
+    const params = [user_id, point_value, distance_km, activity, param_type, createAt, updateAt];
 
     console.log('[saveEmission] INSERT', ACTIVITY_TABLE, params);
     const [result] = await db.query(sql, params);
@@ -65,8 +78,10 @@ exports.saveTransportEmission = async (req, res) => {
       user_id,
       point_value,     // emission stored here
       distance_km,
-      activity,        // just 'Car' / 'Motorcycle' / 'Taxi' / 'Bus'
+      activity,        // 'Car' / 'Motorcycle' / 'Taxi' / 'Bus'
       param_type,      // e.g. 'Diesel Large' or 'Regular taxi'
+      created_at: createAt,
+      updated_at: updateAt,
       created: true
     });
   } catch (err) {
@@ -78,6 +93,7 @@ exports.saveTransportEmission = async (req, res) => {
   }
 };
 
+/* ---------- GET /api/emission/saved/:user_id ---------- */
 exports.listSavedActivities = async (req, res) => {
   try {
     const userId = Number(req.params.user_id);

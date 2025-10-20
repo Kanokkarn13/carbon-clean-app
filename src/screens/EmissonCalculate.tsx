@@ -37,7 +37,7 @@ type RootStackParamList = {
 };
 
 // ---- API origin (อย่าใส่ /api ใน ENV) ----
-const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.104:3000';
+const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:3000';
 const api = (path: string) => `${API_ORIGIN}/api${path}`;
 
 const theme = {

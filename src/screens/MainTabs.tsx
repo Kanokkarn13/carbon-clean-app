@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import HomeStack from './HomeStack';
 import ArticleScreen from './ArticleScreen';
 import TrackingStack from './TrackingStack';
-import ProfileScreen from './ProfileScreen';
+import ProfileStack from './ProfileStack'; // 
 
 const Tab = createBottomTabNavigator();
 
@@ -15,17 +15,27 @@ const MainTabs: React.FC<MainTabsProps> = ({ user }) => {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
+        tabBarActiveTintColor: '#22C55E',
+        tabBarInactiveTintColor: '#9CA3AF',
         tabBarIcon: ({ color, size }) => {
-          let iconName: any = 'home';
-          if (route.name === 'Article') iconName = 'book';
-          else if (route.name === 'Tracking') iconName = 'walk';
-          else if (route.name === 'Profile') iconName = 'person';
-          else iconName = 'home';
+          let iconName: any;
+          switch (route.name) {
+            case 'Article':
+              iconName = 'book';
+              break;
+            case 'Tracking':
+              iconName = 'walk';
+              break;
+            case 'Profile':
+              iconName = 'person';
+              break;
+            default:
+              iconName = 'home';
+          }
           return <Ionicons name={iconName} size={size} color={color} />;
         },
       })}
     >
-      {/* ✅ เปลี่ยนชื่อแท็บเป็น HomeTab เพื่อเลี่ยง warning "Home > Home > Home" */}
       <Tab.Screen
         name="HomeTab"
         children={() => <HomeStack user={user} />}
@@ -39,12 +49,12 @@ const MainTabs: React.FC<MainTabsProps> = ({ user }) => {
         children={() => <TrackingStack user={user} />}
       />
 
-      {/* Profile ปัจจุบันอ่านจาก route.params.user
-         ระหว่างเซสชัน user จะไม่เปลี่ยนอยู่แล้ว ใช้ initialParams ได้ */}
+      {/* ✅ Pass user through initialParams */}
       <Tab.Screen
         name="Profile"
-        component={ProfileScreen}
-        initialParams={{ user }}
+        component={ProfileStack}
+        initialParams={{ user }} 
+        options={{ title: 'Profile' }}
       />
     </Tab.Navigator>
   );

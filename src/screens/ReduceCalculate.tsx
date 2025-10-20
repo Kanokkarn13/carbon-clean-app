@@ -28,7 +28,7 @@ const VEHICLES = ['Car', 'Motorbike', 'Bus', 'Taxis'] as const;
 const FUELS = ['Petrol', 'Diesel', 'Hybrid', 'Unknown'] as const;
 
 // ---- API origin (DON'T put /api in ENV) ----
-const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.104:3000';
+const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:3000';
 const api = (p: string) => `${API_ORIGIN}/api${p}`;
 
 function Chip({
