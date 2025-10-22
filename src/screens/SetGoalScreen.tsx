@@ -9,7 +9,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
-  Keyboard,   // 👈 import Keyboard
+  Keyboard,
+  TouchableWithoutFeedback,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -23,12 +24,12 @@ type User = {
 const theme = {
   primary: '#10B981',
   primaryDark: '#059669',
-  bg: '#F6FAF8',
+  bg: '#F0FDF4',
   card: '#FFFFFF',
   text: '#0B1721',
   sub: '#6B7280',
   border: '#E5E7EB',
-  chip: '#ECFDF5',
+  chip: '#DCFCE7',
 };
 
 const SetGoalScreen: React.FC = () => {
@@ -60,8 +61,7 @@ const SetGoalScreen: React.FC = () => {
   };
 
   const handleSave = async () => {
-    Keyboard.dismiss(); // 👈 Hide keyboard first
-
+    Keyboard.dismiss();
     const km = parseFloat(distance);
     if (!km || km <= 0) {
       Alert.alert('Invalid Distance', 'Please enter a number greater than 0');
@@ -72,15 +72,10 @@ const SetGoalScreen: React.FC = () => {
       const response = await fetch('http://192.168.0.102:3000/api/set-goal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.user_id,
-          goalType,
-          value: km,
-        }),
+        body: JSON.stringify({ user_id: user.user_id, goalType, value: km }),
       });
 
       const result = await response.json();
-
       if (response.ok) {
         Alert.alert('✅ Goal Saved', `${goalType} set to ${km} km`);
       } else {
@@ -90,11 +85,8 @@ const SetGoalScreen: React.FC = () => {
       Alert.alert('Error', 'Failed to connect to server');
     }
 
-    if (goalType === 'walking') {
-      user.walk_goal = km;
-    } else {
-      user.bic_goal = km;
-    }
+    if (goalType === 'walking') user.walk_goal = km;
+    else user.bic_goal = km;
     setDistance(km.toFixed(2));
   };
 
@@ -104,61 +96,64 @@ const SetGoalScreen: React.FC = () => {
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={styles.container}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
-              <Ionicons name="chevron-back" size={26} color={theme.primary} />
-            </TouchableOpacity>
-            <Text style={styles.title}>Monthly Goal</Text>
-            <View style={{ width: 26 }} />
-          </View>
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+          <View style={styles.container}>
+            {/* Header */}
+            <View style={styles.header}>
+              <TouchableOpacity onPress={() => navigation.goBack()}>
+                <Ionicons name="chevron-back" size={26} color={theme.primaryDark} />
+              </TouchableOpacity>
+              <Text style={styles.title}>Monthly Goal</Text>
+              <View style={{ width: 26 }} />
+            </View>
 
-          {/* Toggle */}
-          <View style={styles.toggleWrap}>
-            {(['walking', 'cycling'] as const).map((t) => {
-              const active = goalType === t;
-              return (
-                <TouchableOpacity
-                  key={t}
-                  onPress={() => setGoalType(t)}
-                  style={[styles.toggleChip, active && styles.toggleChipActive]}
-                >
-                  <Ionicons
-                    name={t === 'walking' ? 'walk-outline' : 'bicycle-outline'}
-                    size={16}
-                    color={active ? '#FFF' : theme.primaryDark}
-                  />
-                  <Text style={[styles.toggleText, active && styles.toggleTextActive]}>
-                    {t === 'walking' ? 'Walking' : 'Cycling'}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+            {/* Toggle under header (old position) */}
+            <View style={styles.toggleWrap}>
+              {(['walking', 'cycling'] as const).map((t) => {
+                const active = goalType === t;
+                return (
+                  <TouchableOpacity
+                    key={t}
+                    onPress={() => setGoalType(t)}
+                    style={[styles.toggleChip, active && styles.toggleChipActive]}
+                  >
+                    <Ionicons
+                      name={t === 'walking' ? 'walk-outline' : 'bicycle-outline'}
+                      size={18}
+                      color={active ? '#FFF' : theme.primaryDark}
+                    />
+                    <Text style={[styles.toggleText, active && styles.toggleTextActive]}>
+                      {t === 'walking' ? 'Walking' : 'Cycling'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
-          {/* Circle Input */}
-          <View style={styles.card}>
-            <View style={styles.circle}>
-              <TextInput
-                style={styles.circleInput}
-                keyboardType="numeric"
-                value={distance}
-                onChangeText={(t) => setDistance(sanitizeNumber(t))}
-                maxLength={7}
-              />
-              <View style={styles.kmPill}>
-                <Text style={styles.kmPillText}>km</Text>
+            {/* Centered content below */}
+            <View style={styles.centerContent}>
+              {/* Circle Input */}
+              <View style={styles.circle}>
+                <TextInput
+                  style={styles.circleInput}
+                  keyboardType="numeric"
+                  value={distance}
+                  onChangeText={(t) => setDistance(sanitizeNumber(t))}
+                  maxLength={7}
+                />
+                <View style={styles.kmPill}>
+                  <Text style={styles.kmPillText}>km</Text>
+                </View>
               </View>
+
+              {/* Save Button */}
+              <TouchableOpacity style={styles.primaryBtn} onPress={handleSave}>
+                <Ionicons name="save-outline" size={20} color="#FFF" />
+                <Text style={styles.primaryBtnText}>Save Goal</Text>
+              </TouchableOpacity>
             </View>
           </View>
-
-          {/* Save */}
-          <TouchableOpacity style={styles.primaryBtn} onPress={handleSave}>
-            <Ionicons name="save-outline" size={18} color="#FFF" />
-            <Text style={styles.primaryBtnText}>Save Goal</Text>
-          </TouchableOpacity>
-        </View>
+        </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -167,19 +162,116 @@ const SetGoalScreen: React.FC = () => {
 export default SetGoalScreen;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingHorizontal: 20, paddingBottom: 24 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  title: { fontSize: 20, fontWeight: '800', color: theme.text },
-  toggleWrap: { flexDirection: 'row', alignSelf: 'center', gap: 8, backgroundColor: '#fff', borderRadius: 999, borderWidth: 1, borderColor: theme.border, padding: 6, marginTop: 6 },
-  toggleChip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 999, backgroundColor: '#FFF' },
-  toggleChipActive: { backgroundColor: theme.primary },
-  toggleText: { color: theme.primaryDark, fontWeight: '700' },
-  toggleTextActive: { color: '#FFF' },
-  card: { marginTop: 18, alignItems: 'center' },
-  circle: { width: 220, height: 220, borderRadius: 110, borderWidth: 2, borderColor: theme.border, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
-  circleInput: { fontSize: 48, fontWeight: '800', color: theme.text, textAlign: 'center', minWidth: 160 },
-  kmPill: { position: 'absolute', bottom: 20, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: theme.chip, borderWidth: 1, borderColor: '#D1FAE5' },
-  kmPillText: { color: theme.primaryDark, fontWeight: '800' },
-  primaryBtn: { marginTop: 18, backgroundColor: theme.primary, paddingVertical: 14, borderRadius: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
-  primaryBtnText: { color: '#FFF', fontSize: 16, fontWeight: '800' },
+  container: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: theme.text,
+  },
+  toggleWrap: {
+    flexDirection: 'row',
+    alignSelf: 'center',
+    gap: 8,
+    backgroundColor: '#fff',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.border,
+    padding: 6,
+    marginTop: 8,
+    marginBottom: 30,
+  },
+  toggleChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 999,
+    backgroundColor: '#FFF',
+  },
+  toggleChipActive: {
+    backgroundColor: theme.primary,
+    shadowColor: '#10B981',
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  toggleText: {
+    color: theme.primaryDark,
+    fontWeight: '700',
+  },
+  toggleTextActive: {
+    color: '#FFF',
+  },
+  centerContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  circle: {
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    borderWidth: 2,
+    borderColor: '#D1FAE5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 6,
+    marginBottom: 28,
+  },
+  circleInput: {
+    fontSize: 56,
+    fontWeight: '900',
+    color: theme.text,
+    textAlign: 'center',
+    minWidth: 160,
+  },
+  kmPill: {
+    position: 'absolute',
+    bottom: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: theme.chip,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  kmPillText: {
+    color: theme.primaryDark,
+    fontWeight: '800',
+  },
+  primaryBtn: {
+    backgroundColor: theme.primary,
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    width: '70%',
+    alignSelf: 'center',
+    shadowColor: '#10B981',
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  primaryBtnText: {
+    color: '#FFF',
+    fontSize: 17,
+    fontWeight: '800',
+  },
 });

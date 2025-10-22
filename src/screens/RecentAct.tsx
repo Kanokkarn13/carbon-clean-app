@@ -20,7 +20,7 @@ let MapView: any = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   MapView = require('react-native-maps').default;
-} catch (e) {
+} catch {
   MapView = null;
 }
 
@@ -43,7 +43,6 @@ function fmtNumber(n?: number, digits = 0) {
   if (typeof n !== 'number' || Number.isNaN(n)) return '—';
   return n.toFixed(digits);
 }
-
 function fmtDuration(sec?: number) {
   if (typeof sec !== 'number' || Number.isNaN(sec)) return '—';
   const h = Math.floor(sec / 3600);
@@ -52,12 +51,10 @@ function fmtDuration(sec?: number) {
   if (h) return `${h}:${`${m}`.padStart(2, '0')}:${`${s}`.padStart(2, '0')}`;
   return `${m}:${`${s}`.padStart(2, '0')}`;
 }
-
 function fmtDate(dt?: string | Date) {
   if (!dt) return '—';
   const d = new Date(dt);
   if (isNaN(d.getTime())) return '—';
-  // ตัวอย่างภาพ: 8 OCT 2025 15:44–16:41 (ในโค้ดนี้แสดงเป็น Local string ย่อๆ)
   const date = d.toLocaleDateString(undefined, {
     day: '2-digit',
     month: 'short',
@@ -66,35 +63,71 @@ function fmtDate(dt?: string | Date) {
   const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   return `${date}  ·  ${time}`;
 }
+/** Safely turn unknown into number or undefined */
+function toNum(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 const RecentAct: React.FC = () => {
   const navigation = useNavigation<Nav>();
   const route = useRoute<any>();
-  const activity: ActivityPayload | undefined = route?.params?.activity;
+  const params = (route?.params ?? {}) as Record<string, unknown>;
+  const activity: ActivityPayload | undefined = params.activity as any;
 
-  const title = activity?.title || activity?.type || 'Title';
+  // DEBUG: see exactly what came in
+  console.log('[RecentAct] route.params =', params);
+
+  const title = activity?.title || (activity as any)?.type || 'Title';
   const description = activity?.description || '';
-  const distanceKm = typeof activity?.distance_km === 'number' ? activity.distance_km : undefined;
+  const distanceKm =
+    typeof activity?.distance_km === 'number'
+      ? activity.distance_km
+      : toNum((activity as any)?.distance_km);
+
   const steps =
-    typeof activity?.step_total === 'number' ? activity.step_total.toLocaleString() : undefined;
-  const duration = fmtDuration(activity?.duration_sec);
-  const recordDate = fmtDate(activity?.record_date ?? activity?.created_at);
-  const carbonG =
-    typeof (activity as any)?.carbon_reduce_g === 'number'
-      ? (activity as any).carbon_reduce_g
-      : undefined;
+    typeof activity?.step_total === 'number'
+      ? activity.step_total.toLocaleString()
+      : toNum((activity as any)?.step_total)?.toLocaleString();
+
+  const duration = fmtDuration(
+    typeof activity?.duration_sec === 'number'
+      ? activity.duration_sec
+      : toNum((activity as any)?.duration_sec)
+  );
+  const recordDate = fmtDate((activity as any)?.record_date ?? (activity as any)?.created_at);
+
+  // ---- Carbon Reduce (show grams) ----
+  // Accept these possible shapes (both on activity and top-level route params):
+  //   - carbonReduce (kg)
+  //   - carbon_reduce_kg (kg)
+  //   - carbon_reduce_g (g)
+  const carbonReduceKgTop = toNum(params.carbonReduce);
+  const carbonReduceKgAct =
+    toNum((activity as any)?.carbonReduce) ?? toNum((activity as any)?.carbon_reduce_kg);
+  const carbonReduceGAct = toNum((activity as any)?.carbon_reduce_g);
+
+  // Prefer explicit top-level kg from previous screen, else activity kg, else convert g→kg
+  const carbonKg =
+    carbonReduceKgTop ??
+    carbonReduceKgAct ??
+    (carbonReduceGAct != null ? carbonReduceGAct / 1000 : undefined);
+
+  const carbonG = carbonKg != null ? Math.round(carbonKg * 1000) : carbonReduceGAct;
+
   const points =
     typeof (activity as any)?.points === 'number' ? (activity as any).points : undefined;
 
   // progress_pct: 0..1 (fallback 0.3)
   const progressPct =
-    typeof (activity as any)?.progress_pct === 'number' && !Number.isNaN((activity as any).progress_pct)
+    typeof (activity as any)?.progress_pct === 'number' &&
+    !Number.isNaN((activity as any).progress_pct)
       ? Math.max(0, Math.min(1, (activity as any).progress_pct))
       : 0.3;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
-      {/* ===== Header ===== */}
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={theme.primaryDark} />
@@ -107,7 +140,7 @@ const RecentAct: React.FC = () => {
         contentContainerStyle={{ paddingBottom: 28 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* ===== Map Box ===== */}
+        {/* Map Box */}
         <View style={styles.mapWrap}>
           {MapView ? (
             <MapView
@@ -127,7 +160,7 @@ const RecentAct: React.FC = () => {
             </View>
           )}
 
-          {/* Segmented mimic: Map / Satellite */}
+          {/* Segmented mimic */}
           <View style={styles.mapTabs}>
             <View style={[styles.mapTab, styles.mapTabActive]}>
               <Text style={styles.mapTabTextActive}>Map</Text>
@@ -138,9 +171,8 @@ const RecentAct: React.FC = () => {
           </View>
         </View>
 
-        {/* ===== Summary Card ===== */}
+        {/* Summary Card */}
         <View style={styles.card}>
-          {/* Title */}
           <View style={styles.rowBetween}>
             <Text style={styles.labelBold}>Title:</Text>
             <Text style={[styles.linkTitle]} numberOfLines={1}>
@@ -148,17 +180,14 @@ const RecentAct: React.FC = () => {
             </Text>
           </View>
 
-          {/* Description box (readonly look) */}
           <Text style={[styles.label, { marginTop: 12 }]}>Description</Text>
           <View style={styles.descBox}>
             <Text style={styles.descText}>{description || ' '}</Text>
           </View>
 
-          {/* Date & Points & Duration */}
           <View style={[styles.rowBetween, { marginTop: 12 }]}>
             <View style={{ flex: 1 }}>
               <Text style={styles.dateMain}>{recordDate}</Text>
-              {/* ช่วงเวลาละเอียดสามารถเพิ่มเองตามข้อมูลที่มี */}
             </View>
 
             <View style={{ alignItems: 'flex-end' }}>
@@ -172,21 +201,21 @@ const RecentAct: React.FC = () => {
           </View>
 
           <View style={styles.rowBetweenTight}>
-            <View style={{}}>
+            <View>
               <Text style={[styles.smallMuted]}>Duration</Text>
               <Text style={[styles.durationText]}>{duration}</Text>
             </View>
           </View>
         </View>
 
-        {/* ===== Stats Row (Carbon & Distance) ===== */}
+        {/* Stats Row (Carbon & Distance) */}
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
             <View style={styles.statIcon}>
               <Ionicons name="leaf" size={18} color={theme.primaryDark} />
             </View>
             <Text style={styles.statValue}>
-              {fmtNumber(carbonG ?? 144, 0)} <Text style={styles.statUnit}>g</Text>
+              {fmtNumber(carbonG, 0)} <Text style={styles.statUnit}>g</Text>
             </Text>
             <Text style={styles.statLabel}>carbon reduce</Text>
           </View>
@@ -196,13 +225,13 @@ const RecentAct: React.FC = () => {
               <Ionicons name="location" size={18} color={theme.primaryDark} />
             </View>
             <Text style={styles.statValue}>
-              {fmtNumber(distanceKm, 2) ?? '1.44'} <Text style={styles.statUnit}>km</Text>
+              {fmtNumber(distanceKm, 2)} <Text style={styles.statUnit}>km</Text>
             </Text>
             <Text style={styles.statLabel}>distance</Text>
           </View>
         </View>
 
-        {/* ===== Progress ===== */}
+        {/* Progress */}
         <View style={styles.progressWrap}>
           <Text style={styles.progressTitle}>Your Current Progress</Text>
 
@@ -217,11 +246,12 @@ const RecentAct: React.FC = () => {
           </View>
 
           <View style={styles.progressBarTrack}>
-            <View style={[styles.progressBarFill, { width: `${Math.round(progressPct * 100)}%` }]} />
+            <View
+              style={[styles.progressBarFill, { width: `${Math.round(progressPct * 100)}%` }]}
+            />
           </View>
         </View>
 
-        {/* (ออปชัน) ขอบล่างให้มีพื้นที่พอสำหรับแท็บจริงของแอป */}
         <View style={{ height: 8 }} />
       </ScrollView>
     </SafeAreaView>
@@ -281,26 +311,10 @@ const styles = StyleSheet.create({
     padding: 3,
     borderRadius: 10,
   },
-  mapTab: {
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-  },
-  mapTabActive: {
-    backgroundColor: theme.card,
-    borderWidth: 1,
-    borderColor: theme.border,
-  },
-  mapTabText: {
-    color: theme.sub,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  mapTabTextActive: {
-    color: theme.text,
-    fontSize: 12,
-    fontWeight: '700',
-  },
+  mapTab: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 8 },
+  mapTabActive: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border },
+  mapTabText: { color: theme.sub, fontSize: 12, fontWeight: '600' },
+  mapTabTextActive: { color: theme.text, fontSize: 12, fontWeight: '700' },
 
   card: {
     marginHorizontal: 16,
@@ -340,12 +354,7 @@ const styles = StyleSheet.create({
 
   dateMain: { color: theme.text, fontSize: 14, fontWeight: '700' },
 
-  pointLabel: {
-    color: theme.primaryDark,
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
+  pointLabel: { color: theme.primaryDark, fontSize: 12, fontWeight: '700', marginBottom: 6 },
   pointChip: {
     backgroundColor: theme.chip,
     borderWidth: 1,
@@ -359,12 +368,7 @@ const styles = StyleSheet.create({
   smallMuted: { color: theme.sub, fontSize: 11, marginTop: 8 },
   durationText: { color: theme.text, fontWeight: '700', marginTop: 2 },
 
-  statsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingHorizontal: 16,
-    marginTop: 12,
-  },
+  statsRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, marginTop: 12 },
   statCard: {
     flex: 1,
     backgroundColor: theme.card,
@@ -421,27 +425,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  progressPctText: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: theme.text,
-  },
-  progressSub: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: theme.sub,
-  },
-  progressBarTrack: {
-    height: 8,
-    borderRadius: 6,
-    backgroundColor: '#E5E7EB',
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: 8,
-    borderRadius: 6,
-    backgroundColor: theme.primary,
-  },
+  progressPctText: { fontSize: 18, fontWeight: '800', color: theme.text },
+  progressSub: { fontSize: 14, fontWeight: '600', color: theme.sub },
+  progressBarTrack: { height: 8, borderRadius: 6, backgroundColor: '#E5E7EB', overflow: 'hidden' },
+  progressBarFill: { height: 8, borderRadius: 6, backgroundColor: theme.primary },
 });
 
 export default RecentAct;

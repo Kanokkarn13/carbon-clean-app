@@ -20,6 +20,7 @@ import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
 
 import { useTracking } from '../hooks/useTracking';
 import { formatTime, saveActivity, buildSaveEndpoint } from '../utils/trackingHelpers';
+import { computeCarbonReduce } from '../utils/calcCarbon'; // <-- NEW
 
 type Navigation = NativeStackNavigationProp<any>;
 type TrackingScreenProps = { user: any };
@@ -45,9 +46,11 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
   const [showModal, setShowModal] = useState(false);
   const [inputTitle, setInputTitle] = useState('');
   const [inputDesc, setInputDesc] = useState('');
-  const [saving, setSaving] = useState(false); // prevent double-tap
+  const [saving, setSaving] = useState(false);
 
-  // 👇 NEW: lock map gestures by default so scrolling always works
+  // zero-out the metrics in UI after saving
+  const [uiZero, setUiZero] = useState(false);
+
   const [mapInteractive, setMapInteractive] = useState(false);
 
   const {
@@ -63,7 +66,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
     updateCount,
   } = useTracking();
 
-  // ===== Map: keep region centered to current user location =====
   const mapRef = useRef<MapView | null>(null);
   const DEFAULT_REGION: Region = {
     latitude: 13.7563,
@@ -90,7 +92,14 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
     }
   }, [location?.coords?.latitude, location?.coords?.longitude]);
 
+  // derived numbers shown in UI (zero when uiZero && not tracking)
+  const shownDistance = uiZero && !isTracking ? 0 : distance;
+  const shownSpeed    = uiZero && !isTracking ? 0 : speed;
+  const shownTime     = uiZero && !isTracking ? 0 : time;
+  const shownSteps    = uiZero && !isTracking ? 0 : steps;
+
   const handleStart = () => {
+    setUiZero(false);
     setIsFinished(false);
     startTracking();
   };
@@ -109,6 +118,17 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
 
   const saveEndpoint = buildSaveEndpoint(goalType);
 
+  // ---- DEBUG: show live metrics changes ----
+  useEffect(() => {
+    console.log('[Tracking] metrics', {
+      isTracking,
+      distance_km: distance,
+      speed_kmh: speed,
+      time_sec: time,
+      steps,
+    });
+  }, [isTracking, distance, speed, time, steps]);
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       {/* Header */}
@@ -124,7 +144,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
         <View style={styles.headerSide} />
       </View>
 
-      {/* Avoid keyboard overlap; let ScrollView handle dismissal on drag */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -134,7 +153,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
-          // Android sometimes needs this to feel smoother with large first child
           overScrollMode="always"
         >
           <View style={styles.maincontainer}>
@@ -154,7 +172,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                 toolbarEnabled={false}
                 moveOnMarkerPress={false}
                 onRegionChangeComplete={(r) => setMapRegion(r)}
-                // 👇 These make scroll reliable unless the user explicitly enables pan
                 scrollEnabled={mapInteractive}
                 zoomEnabled={mapInteractive}
                 pitchEnabled={mapInteractive}
@@ -238,11 +255,11 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
             {/* Metrics */}
             <View style={styles.metricsCard}>
               {[
-                { icon: 'map-outline', value: distance.toFixed(3), label: 'Distance', unit: 'km' },
-                { icon: 'speedometer-outline', value: speed.toFixed(2), label: 'Speed', unit: 'km/h' },
-                { icon: 'time-outline', value: formatTime(time), label: 'Time', unit: '' },
+                { icon: 'map-outline', value: shownDistance.toFixed(3), label: 'Distance', unit: 'km' },
+                { icon: 'speedometer-outline', value: shownSpeed.toFixed(2), label: 'Speed', unit: 'km/h' },
+                { icon: 'time-outline', value: formatTime(shownTime), label: 'Time', unit: '' },
                 ...(goalType === 'walking'
-                  ? [{ icon: 'footsteps-outline', value: String(steps), label: 'Steps', unit: '' }]
+                  ? [{ icon: 'footsteps-outline', value: String(shownSteps), label: 'Steps', unit: '' }]
                   : []),
               ].map((m, idx) => (
                 <View key={`${m.label}-${idx}`} style={styles.metricItem}>
@@ -264,7 +281,7 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
               {location ? (
                 <Text style={styles.debugTextSmall}>
                   Lat {location.coords.latitude.toFixed(6)} · Lng {location.coords.longitude.toFixed(6)} ·
-                  Speed {speed.toFixed(2)} km/h · Updates {updateCount}
+                  Speed {shownSpeed.toFixed(2)} km/h · Updates {updateCount}
                 </Text>
               ) : (
                 <Text style={styles.debugTextSmall}>Waiting for GPS fix…</Text>
@@ -303,13 +320,11 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
         animationType="slide"
         onRequestClose={() => setShowModal(false)}
       >
-        {/* Tap overlay to dismiss keyboard (not the modal) */}
         <TouchableOpacity
           activeOpacity={1}
           style={styles.modalOverlay}
           onPress={Keyboard.dismiss}
         >
-          {/* Touchable area inside modal shouldn't close the modal */}
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ width: '100%' }}
@@ -360,10 +375,10 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                 </View>
 
                 <View style={styles.summaryRow}>
-                  <Text style={styles.summaryText}>Distance: {distance.toFixed(2)} km</Text>
-                  <Text style={styles.summaryText}>Duration: {formatTime(time)}</Text>
+                  <Text style={styles.summaryText}>Distance: {shownDistance.toFixed(2)} km</Text>
+                  <Text style={styles.summaryText}>Duration: {formatTime(shownTime)}</Text>
                   {goalType === 'walking' ? (
-                    <Text style={styles.summaryText}>Steps: {steps}</Text>
+                    <Text style={styles.summaryText}>Steps: {shownSteps}</Text>
                   ) : null}
                 </View>
 
@@ -381,21 +396,71 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                       if (saving) return;
                       setSaving(true);
 
+                      // ⬇️ NEW: compute carbon before saving
+                      const carbonReduce = computeCarbonReduce(user, distance);
+                      console.log('🧮 [Save] computeCarbonReduce ->', {
+                        distance_km: distance,
+                        vehicle: user?.vehicle,
+                        carbonReduce,
+                        type: typeof carbonReduce,
+                        goalType,
+                      });
+
                       const payload: any = {
                         title: inputTitle,
                         description: inputDesc,
                         distance_km: distance,
                         duration_sec: time,
                         user_id: user.user_id,
+                        carbonReduce, // <-- include in initial save
                       };
                       if (goalType === 'walking') payload.step_total = steps;
 
+                      console.log('📤 [Save] endpoint + payload', {
+                        saveEndpoint,
+                        goalType,
+                        payload,
+                      });
+
                       const result = await saveActivity(payload, saveEndpoint);
 
+                      console.log('📥 [Save] response', result);
+
                       if (result.ok) {
+                        // robust id extraction (string or number)
+                        const activityId = ((): number | null => {
+                          const d = result?.data as
+                            | { activity_id?: number | string; id?: number | string; insertId?: number | string; result?: { insertId?: number | string } }
+                            | undefined;
+                          const raw =
+                            d?.activity_id ??
+                            d?.id ??
+                            d?.insertId ??
+                            d?.result?.insertId ??
+                            null;
+                          const idNum = raw != null ? Number(raw) : NaN;
+                          return Number.isFinite(idNum) ? idNum : null;
+                        })();
+
                         Alert.alert('✅ Saved', result.data?.message || 'Activity saved!');
                         setShowModal(false);
-                        navigation.navigate('CarbonOffsetScreen', { user, distance, duration: time / 60 });
+
+                        // ZERO OUT the UI now that we’ve saved
+                        setUiZero(true);
+
+                        // Navigate to summary (optional: pass carbonReduce too)
+                        const navParams = {
+                          user,
+                          goalType,
+                          distance,             // km
+                          duration: time / 60,  // minutes
+                          activityId,
+                          carbonReduce,         // for display
+                        };
+                        console.log('➡️ [Navigate] CarbonOffsetScreen params', navParams);
+
+                        navigation.navigate('CarbonOffsetScreen', navParams);
+
                         resetLocalState();
                       } else {
                         Alert.alert('❌ Error', result.data?.message || 'Failed to save activity');
@@ -447,7 +512,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
   },
 
-  // Recenter / Pan toggle buttons
   recenterBtn: {
     position: 'absolute',
     right: 10,
@@ -463,7 +527,6 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
 
-  // Toggle chips
   toggleContainer: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 12 },
   toggleBtn: {
     flexDirection: 'row',
@@ -480,7 +543,6 @@ const styles = StyleSheet.create({
   toggleText: { color: theme.primaryDark, fontWeight: '700' },
   toggleTextActive: { color: '#FFF' },
 
-  // Metrics
   metricsCard: {
     backgroundColor: theme.card,
     borderRadius: 16,
@@ -516,7 +578,6 @@ const styles = StyleSheet.create({
   metricValue: { fontSize: 22, fontWeight: '800', color: theme.text },
   metricLabel: { fontSize: 12, color: theme.sub },
 
-  // Debug
   debugContainer: {
     marginTop: 12,
     padding: 12,
@@ -528,7 +589,6 @@ const styles = StyleSheet.create({
   debugText: { color: theme.primaryDark, fontWeight: '700' },
   debugTextSmall: { color: theme.primaryDark, marginTop: 4 },
 
-  // Actions
   actionsRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
   actionBtn: {
     flex: 1,
@@ -545,7 +605,6 @@ const styles = StyleSheet.create({
   actionText: { color: '#FFF', fontWeight: '800' },
   actionTextSecondary: { color: theme.primaryDark, fontWeight: '800' },
 
-  // Modal
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',

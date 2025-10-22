@@ -2,6 +2,11 @@
 const express = require('express');
 const db = require('../config/db');
 const { saveTransportEmission, listSavedActivities } = require('../controllers/saveEmissionController');
+
+// ✅ import the correct controller files & named exports
+const { saveWalking, updateWalkingCarbon } = require('../controllers/saveWalkingController');
+const { saveCycling, updateCyclingCarbon } = require('../controllers/saveCyclingController');
+
 const router = express.Router();
 
 console.log('[activityRoutes] loaded:', __filename, 'ver=r3-add-save-emission');
@@ -20,6 +25,7 @@ async function fetchRecentActivities(userId) {
       distance_km,
       step_total,
       duration_sec,
+      carbonReduce,
       record_date
     FROM walk_history
     WHERE user_id = ?
@@ -38,6 +44,7 @@ async function fetchRecentActivities(userId) {
       description,
       distance_km,
       duration_sec,
+      carbonReduce,
       record_date
     FROM bic_history
     WHERE user_id = ?
@@ -56,6 +63,7 @@ async function fetchRecentActivities(userId) {
       distance_km: r.distance_km != null ? Number(r.distance_km) : 0,
       step_total: r.step_total != null ? Number(r.step_total) : null,
       duration_sec: r.duration_sec != null ? Number(r.duration_sec) : null,
+      carbonReduce: r.carbonReduce != null ? Number(r.carbonReduce) : 0,
       record_date: r.record_date,
     })),
     ...bikes.map(r => ({
@@ -66,6 +74,7 @@ async function fetchRecentActivities(userId) {
       distance_km: r.distance_km != null ? Number(r.distance_km) : 0,
       step_total: null,
       duration_sec: r.duration_sec != null ? Number(r.duration_sec) : null,
+      carbonReduce: r.carbonReduce != null ? Number(r.carbonReduce) : 0,
       record_date: r.record_date,
     })),
   ]
@@ -112,9 +121,15 @@ router.post('/recent-activity', async (req, res) => {
 });
 
 // ------------------------------
-// NEW: save + list saved emission records
+// NEW: create/save walking & cycling activities
 // ------------------------------
+// These endpoints are called by the app when you press "Save" on TrackingScreen
+router.post('/save-walking', saveWalking);
+router.post('/save-cycling', saveCycling);
 
+// ------------------------------
+// NEW: save + list saved emission records (transport emission)
+// ------------------------------
 /**
  * POST /emission
  * body: { user_id, activity_type: 'Car'|'Motorcycle'|'Taxi'|'Bus', emission_kgco2e, distance_km, parameters? }
@@ -127,5 +142,11 @@ router.post('/emission', saveTransportEmission);
  * Reads from activities table for a given user.
  */
 router.get('/saved/:user_id', listSavedActivities);
+
+// ------------------------------
+// NEW: carbon update routes (used by CarbonOffsetScreen - optional if you PATCH later)
+// ------------------------------
+router.patch('/walking/:id/carbon', updateWalkingCarbon);
+router.patch('/cycling/:id/carbon', updateCyclingCarbon);
 
 module.exports = router;

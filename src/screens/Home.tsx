@@ -37,6 +37,11 @@ export type Activity = {
   duration_sec?: number;
   record_date?: string | Date | number;
   id?: string | number;
+
+  // ⬇️ add carbon fields so we can pass them to RecentAct
+  carbonReduce?: number;       // kg
+  carbon_reduce_kg?: number;   // kg (alternate naming)
+  carbon_reduce_g?: number;    // g  (derived if only kg exists)
 };
 
 type Props = {
@@ -76,7 +81,7 @@ function normalizeActivities(raw: any): Activity[] {
     (Array.isArray(raw?.items) && raw.items) ||
     [];
 
-  return arr.map((r: any): Activity => {
+  const out: Activity[] = arr.map((r: any): Activity => {
     const type = toActivityType(r?.type ?? r?.activity_type);
 
     // distance -> km
@@ -134,6 +139,34 @@ function normalizeActivities(raw: any): Activity[] {
       r?.detail ??
       undefined;
 
+    // ⬇️ carbon (read any field the API may return)
+    // r.carbonReduce or r.carbon_reduce_kg are in **kg**
+    // r.carbon_reduce_g is already **grams**
+    const carbonReduceKgRaw =
+      r?.carbonReduce != null
+        ? Number(r.carbonReduce)
+        : r?.carbon_reduce_kg != null
+        ? Number(r.carbon_reduce_kg)
+        : undefined;
+
+    const carbonReduceGRaw =
+      r?.carbon_reduce_g != null ? Number(r.carbon_reduce_g) : undefined;
+
+    // Normalize: prefer kg if present; otherwise derive from g
+    const carbon_reduce_kg =
+      Number.isFinite(carbonReduceKgRaw as number)
+        ? (carbonReduceKgRaw as number)
+        : Number.isFinite(carbonReduceGRaw as number)
+        ? (carbonReduceGRaw as number) / 1000
+        : undefined;
+
+    const carbon_reduce_g =
+      Number.isFinite(carbonReduceGRaw as number)
+        ? (carbonReduceGRaw as number)
+        : Number.isFinite(carbon_reduce_kg as number)
+        ? (carbon_reduce_kg as number) * 1000
+        : undefined;
+
     return {
       type,
       title,
@@ -143,8 +176,18 @@ function normalizeActivities(raw: any): Activity[] {
       duration_sec,
       record_date,
       id: r?.id ?? r?._id,
+
+      // expose all carbon variants so downstream UIs can read any
+      carbonReduce: carbon_reduce_kg,   // alias in kg
+      carbon_reduce_kg,                 // kg
+      carbon_reduce_g,                  // grams
     };
   });
+
+  if (__DEV__ && out.length) {
+    console.log('[Home] normalizeActivities sample:', out[0]);
+  }
+  return out;
 }
 
 /** -------- Helpers for distance & time display -------- */
@@ -305,6 +348,9 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
         }
 
         const list = normalizeActivities(data || []);
+        if (__DEV__) {
+          console.log('[Home] activities normalized[0]', list[0]);
+        }
         setActivities(list.slice(0, 10));
       } catch {
         setActivities([]);
@@ -324,9 +370,9 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
       : 'Guest';
 
   // --- total comparison (Reduction vs Emission) ---
-  const diff = totalReduction - totalEmission; // positive => good (green), negative => bad (red)
+  const diff = totalReduction - totalEmission;
   const diffColor = diff >= 0 ? styles.statPositive : styles.statNegative;
-  const diffText = `${diff >= 0 ? '' : ''}${diff.toFixed(2)} kgCO₂e`; // keep normal sign (will be negative if emission>reduction)
+  const diffText = `${diff.toFixed(2)} kgCO₂e`;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -468,6 +514,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
                   key={`${activity.type}-${activity.id ?? idx}-${activity.record_date ?? idx}`}
                   style={styles.recentItem}
                   activeOpacity={0.9}
+                  // ⬇️ we now pass carbon fields along to RecentAct
                   onPress={() => (navigation as any).navigate('RecentAct', { activity })}
                 >
                   <View style={styles.recentIcon}>
@@ -501,6 +548,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 };
 
 const styles = StyleSheet.create({
+  // … unchanged styles …
   container: { padding: 20, paddingBottom: 44 },
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
@@ -519,7 +567,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   pointsText: { color: theme.primaryDark, fontWeight: '700' },
-
   card: {
     backgroundColor: theme.card,
     borderRadius: 16,
@@ -554,7 +601,6 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   pillBtnText: { color: theme.primaryDark, fontWeight: '700' },
-
   quickRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
   quickCard: {
     flex: 1,
@@ -575,7 +621,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   quickLabel: { fontWeight: '700', color: theme.text },
-
   sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.text, marginBottom: 8 },
   activityBox: {
     borderWidth: 1,
@@ -605,7 +650,6 @@ const styles = StyleSheet.create({
   statMuted: { color: theme.sub, fontWeight: '600' },
   statPositive: { color: theme.primaryDark, fontWeight: '700' },
   statNegative: { color: theme.danger, fontWeight: '700' },
-
   emptyState: {
     borderWidth: 1,
     borderColor: theme.border,
@@ -615,7 +659,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   emptyText: { color: theme.sub },
-
   recentItem: {
     marginTop: 10,
     padding: 12,
