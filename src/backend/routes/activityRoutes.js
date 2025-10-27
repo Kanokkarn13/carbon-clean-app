@@ -2,31 +2,30 @@
 const express = require('express');
 const db = require('../config/db');
 const { saveTransportEmission, listSavedActivities } = require('../controllers/saveEmissionController');
-
-// ✅ import the correct controller files & named exports
 const { saveWalking, updateWalkingCarbon } = require('../controllers/saveWalkingController');
 const { saveCycling, updateCyclingCarbon } = require('../controllers/saveCyclingController');
 
 const router = express.Router();
 
-console.log('[activityRoutes] loaded:', __filename, 'ver=r3-add-save-emission');
+console.log('[activityRoutes] loaded:', __filename, 'ver=r4-crud-walk-cycle');
 
-// ------------------------------
-// internal helper for recent history
-// ------------------------------
+/* ---------------- helpers ---------------- */
+function toNum(v, def = null) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+}
+function nowGMT7() {
+  const now = new Date();
+  const gmt7 = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  return gmt7.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/* ---------------- internal: recent activities ---------------- */
 async function fetchRecentActivities(userId) {
-  // WALKING
   const [walks] = await db.query(
     `
     SELECT
-      id,
-      title,
-      description,
-      distance_km,
-      step_total,
-      duration_sec,
-      carbonReduce,
-      record_date
+      id, title, description, distance_km, step_total, duration_sec, carbonReduce, record_date
     FROM walk_history
     WHERE user_id = ?
     ORDER BY record_date DESC
@@ -35,17 +34,10 @@ async function fetchRecentActivities(userId) {
     [userId]
   );
 
-  // CYCLING
   const [bikes] = await db.query(
     `
     SELECT
-      id,
-      title,
-      description,
-      distance_km,
-      duration_sec,
-      carbonReduce,
-      record_date
+      id, title, description, distance_km, duration_sec, carbonReduce, record_date
     FROM bic_history
     WHERE user_id = ?
     ORDER BY record_date DESC
@@ -84,9 +76,7 @@ async function fetchRecentActivities(userId) {
   return { activities };
 }
 
-// ------------------------------
-// EXISTING: recent activity endpoints
-// ------------------------------
+/* ---------------- existing: recent activity endpoints ---------------- */
 router.get('/recent-activity/:user_id', async (req, res) => {
   try {
     const out = await fetchRecentActivities(req.params.user_id);
@@ -120,33 +110,170 @@ router.post('/recent-activity', async (req, res) => {
   }
 });
 
-// ------------------------------
-// NEW: create/save walking & cycling activities
-// ------------------------------
-// These endpoints are called by the app when you press "Save" on TrackingScreen
+/* ---------------- save walking & cycling (create) ---------------- */
 router.post('/save-walking', saveWalking);
 router.post('/save-cycling', saveCycling);
 
-// ------------------------------
-// NEW: save + list saved emission records (transport emission)
-// ------------------------------
-/**
- * POST /emission
- * body: { user_id, activity_type: 'Car'|'Motorcycle'|'Taxi'|'Bus', emission_kgco2e, distance_km, parameters? }
- * Writes a row into activities(user_id, point_value, activity, create_at, updated_at).
- */
+/* ---------------- transport emission save + list ---------------- */
 router.post('/emission', saveTransportEmission);
-
-/**
- * GET /saved/:user_id?limit=50&offset=0
- * Reads from activities table for a given user.
- */
 router.get('/saved/:user_id', listSavedActivities);
 
-// ------------------------------
-// NEW: carbon update routes (used by CarbonOffsetScreen - optional if you PATCH later)
-// ------------------------------
+/* ---------------- carbon patch (optional, from CarbonOffsetScreen) ---------------- */
 router.patch('/walking/:id/carbon', updateWalkingCarbon);
 router.patch('/cycling/:id/carbon', updateCyclingCarbon);
+
+/* ======================================================================
+ * NEW: CRUD for WALKING
+ * ==================================================================== */
+// GET one walking activity
+router.get('/walking/:id', async (req, res) => {
+  try {
+    const id = toNum(req.params.id);
+    if (!id) return res.status(400).json({ ok: false, message: 'Invalid id' });
+
+    const [rows] = await db.query(
+      `SELECT id, user_id, title, description, distance_km, step_total, duration_sec, carbonReduce, record_date
+       FROM walk_history WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Not found' });
+    res.json({ ok: true, item: rows[0] });
+  } catch (err) {
+    console.error('GET /walking/:id error', err);
+    res.status(500).json({ ok: false, message: 'Internal server error' });
+  }
+});
+
+// PATCH edit walking activity
+router.patch('/walking/:id', async (req, res) => {
+  try {
+    const id = toNum(req.params.id);
+    if (!id) return res.status(400).json({ ok: false, message: 'Invalid id' });
+
+    // Allowed updatable fields
+    const fields = {
+      title: req.body?.title ?? undefined,
+      description: req.body?.description ?? undefined,
+      distance_km: req.body?.distance_km != null ? toNum(req.body.distance_km) : undefined,
+      step_total: req.body?.step_total != null ? toNum(req.body.step_total) : undefined,
+      duration_sec: req.body?.duration_sec != null ? toNum(req.body.duration_sec) : undefined,
+      carbonReduce: req.body?.carbonReduce != null ? toNum(req.body.carbonReduce) : undefined,
+    };
+
+    const setParts = [];
+    const values = [];
+    Object.entries(fields).forEach(([k, v]) => {
+      if (v !== undefined) {
+        setParts.push(`${k} = ?`);
+        values.push(v);
+      }
+    });
+
+    if (!setParts.length) {
+      return res.status(400).json({ ok: false, message: 'No updatable fields provided' });
+    }
+
+    values.push(id);
+    const [result] = await db.query(
+      `UPDATE walk_history SET ${setParts.join(', ')}, record_date = record_date WHERE id = ?`,
+      values
+    );
+
+    res.json({ ok: true, message: 'Walking activity updated', affectedRows: result?.affectedRows ?? 0, id });
+  } catch (err) {
+    console.error('PATCH /walking/:id error', err);
+    res.status(500).json({ ok: false, message: 'Internal server error' });
+  }
+});
+
+// DELETE walking activity
+router.delete('/walking/:id', async (req, res) => {
+  try {
+    const id = toNum(req.params.id);
+    if (!id) return res.status(400).json({ ok: false, message: 'Invalid id' });
+
+    const [result] = await db.query(`DELETE FROM walk_history WHERE id = ?`, [id]);
+    res.json({ ok: true, message: 'Walking activity deleted', affectedRows: result?.affectedRows ?? 0, id });
+  } catch (err) {
+    console.error('DELETE /walking/:id error', err);
+    res.status(500).json({ ok: false, message: 'Internal server error' });
+  }
+});
+
+/* ======================================================================
+ * NEW: CRUD for CYCLING
+ * ==================================================================== */
+// GET one cycling activity
+router.get('/cycling/:id', async (req, res) => {
+  try {
+    const id = toNum(req.params.id);
+    if (!id) return res.status(400).json({ ok: false, message: 'Invalid id' });
+
+    const [rows] = await db.query(
+      `SELECT id, user_id, title, description, distance_km, duration_sec, carbonReduce, record_date
+       FROM bic_history WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Not found' });
+    res.json({ ok: true, item: rows[0] });
+  } catch (err) {
+    console.error('GET /cycling/:id error', err);
+    res.status(500).json({ ok: false, message: 'Internal server error' });
+  }
+});
+
+// PATCH edit cycling activity
+router.patch('/cycling/:id', async (req, res) => {
+  try {
+    const id = toNum(req.params.id);
+    if (!id) return res.status(400).json({ ok: false, message: 'Invalid id' });
+
+    const fields = {
+      title: req.body?.title ?? undefined,
+      description: req.body?.description ?? undefined,
+      distance_km: req.body?.distance_km != null ? toNum(req.body.distance_km) : undefined,
+      duration_sec: req.body?.duration_sec != null ? toNum(req.body.duration_sec) : undefined,
+      carbonReduce: req.body?.carbonReduce != null ? toNum(req.body.carbonReduce) : undefined,
+    };
+
+    const setParts = [];
+    const values = [];
+    Object.entries(fields).forEach(([k, v]) => {
+      if (v !== undefined) {
+        setParts.push(`${k} = ?`);
+        values.push(v);
+      }
+    });
+
+    if (!setParts.length) {
+      return res.status(400).json({ ok: false, message: 'No updatable fields provided' });
+    }
+
+    values.push(id);
+    const [result] = await db.query(
+      `UPDATE bic_history SET ${setParts.join(', ')}, record_date = record_date WHERE id = ?`,
+      values
+    );
+
+    res.json({ ok: true, message: 'Cycling activity updated', affectedRows: result?.affectedRows ?? 0, id });
+  } catch (err) {
+    console.error('PATCH /cycling/:id error', err);
+    res.status(500).json({ ok: false, message: 'Internal server error' });
+  }
+});
+
+// DELETE cycling activity
+router.delete('/cycling/:id', async (req, res) => {
+  try {
+    const id = toNum(req.params.id);
+    if (!id) return res.status(400).json({ ok: false, message: 'Invalid id' });
+
+    const [result] = await db.query(`DELETE FROM bic_history WHERE id = ?`, [id]);
+    res.json({ ok: true, message: 'Cycling activity deleted', affectedRows: result?.affectedRows ?? 0, id });
+  } catch (err) {
+    console.error('DELETE /cycling/:id error', err);
+    res.status(500).json({ ok: false, message: 'Internal server error' });
+  }
+});
 
 module.exports = router;

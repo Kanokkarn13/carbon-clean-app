@@ -1,3 +1,4 @@
+// src/screens/Dashboard.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -13,40 +14,44 @@ import { LineChart, PieChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 
+import theme from '../utils/theme';
+import { baseLineChartConfig } from '../utils/chartConfig';
+import { useDashboardSeries, Period } from '../hooks/useDashboardSeries';
+import { fetchRecentActivities } from '../services/activityService';
+import { fetchEmissionItems, fetchReductionItems } from '../services/totalsService';
+import { safeDate } from '../utils/date';
+import ProgressStat from '../components/ProgressStat';
+import SegmentedControl from '../components/SegmentedControl';
+import NavPeriodButtons from '../components/NavPeriodButtons';
+
 const screenWidth = Dimensions.get('window').width;
+const SCREEN_PAD = 16;
+const CARD_HPAD = 14;
+const INNER_WIDTH = screenWidth - SCREEN_PAD * 2 - CARD_HPAD * 2;
 
-/** layout constants */
-const SCREEN_PAD = 16;   // padding ของ container ด้านนอก
-const CARD_HPAD = 14;    // padding ซ้าย/ขวาของการ์ด
-const INNER_WIDTH = screenWidth - (SCREEN_PAD * 2) - (CARD_HPAD * 2); // กว้างด้านในจริงของการ์ด
-
-const theme = {
-  primary: '#10B981',
-  primaryDark: '#059669',
-  orange: '#FB923C',
-  bg: '#F6FAF8',
-  card: '#FFFFFF',
-  text: '#0B1721',
-  sub: '#6B7280',
-  border: '#E5E7EB',
-};
-
-type Period = 'week' | 'month' | 'year';
-
+/* ---------- helpers ---------- */
 const isValidDate = (d: any) => d instanceof Date && !Number.isNaN(d.getTime());
-const safeDate = (v: any) => {
-  const d = new Date(v);
-  return isValidDate(d) ? d : null;
-};
-function startOfDay(d?: Date | null) {
-  if (!d || !isValidDate(d)) return null;
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function iso(d?: Date | null) {
-  const s = startOfDay(d);
-  return s ? s.toISOString().slice(0, 10) : '';
+const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+const endOfDay   = (d: Date) => { const x = new Date(d); x.setHours(23,59,59,999); return x; };
+const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const pctText = (v: number) => `${num(v).toFixed(2)}%`;
+
+function getRange(period: Period, offset: number) {
+  const now = new Date();
+  if (period === 'week') {
+    const base = startOfDay(now);
+    const monIdx = (base.getDay() + 6) % 7;
+    base.setDate(base.getDate() - monIdx + offset * 7);
+    const end = new Date(base); end.setDate(base.getDate() + 6);
+    return { start: startOfDay(base), end: endOfDay(end) };
+  }
+  if (period === 'month') {
+    const first = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const last  = new Date(first.getFullYear(), first.getMonth() + 1, 0);
+    return { start: startOfDay(first), end: endOfDay(last) };
+  }
+  const y = now.getFullYear() + offset;
+  return { start: startOfDay(new Date(y,0,1)), end: endOfDay(new Date(y,11,31)) };
 }
 
 export default function Dashboard() {
@@ -54,39 +59,33 @@ export default function Dashboard() {
   const navigation = useNavigation();
   const { user } = route.params as { user: any };
 
-  // UI / data state
   const [loading, setLoading] = useState(false);
   const [activities, setActivities] = useState<any[]>([]);
   const [period, setPeriod] = useState<Period>('week');
   const [offset, setOffset] = useState(0);
-  const [walkingProgress, setWalkingProgress] = useState<number>(0);
-  const [cyclingProgress, setCyclingProgress] = useState<number>(0);
-  const [emissionData, setEmissionData] = useState<number>(70);
-  const [reductionData, setReductionData] = useState<number>(30);
+  const [walkingProgress, setWalkingProgress] = useState(0);
+  const [cyclingProgress, setCyclingProgress] = useState(0);
 
+  const [emissionItems, setEmissionItems] = useState<{ point_value: number; record_date: any }[]>([]);
+  const [reductionItems, setReductionItems] = useState<{ point_value: number; record_date: any }[]>([]);
+  const [pieLoading, setPieLoading] = useState(false);
+
+  /* ----- recent activities ----- */
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`http://192.168.0.102:3000/api/recent-activity/${user.user_id}`);
-        const json = await res.json();
-        const arr = Array.isArray(json.activities) ? json.activities : [];
-
-        const normalized = arr.map((a: any) => {
-          const rdRaw = a.record_date ?? a.created_at ?? null;
-          const d = safeDate(rdRaw);
+        const raw = await fetchRecentActivities(user.user_id);
+        const normalized = raw.map((a: any) => {
+          const d = safeDate(a.record_date ?? a.created_at);
           return {
             ...a,
             record_date: d ? d.toISOString() : null,
-            distance_km:
-              typeof a.distance_km === 'number' ? a.distance_km : Number(a.distance_km) || 0,
+            distance_km: Number(a.distance_km) || 0,
             type: a.type || 'Activity',
-            title:
-              (a.title && String(a.title).trim()) ||
-              `${a.type || 'Activity'} on ${d ? d.toISOString().slice(0, 10) : 'Unknown'}`,
+            title: a.title || `${a.type || 'Activity'} on ${d ? d.toISOString().slice(0, 10) : 'Unknown'}`,
           };
         });
-
         setActivities(normalized);
       } catch {
         setActivities([]);
@@ -96,136 +95,75 @@ export default function Dashboard() {
     })();
   }, [user]);
 
-  const { labels, wData, cData } = useMemo(() => {
-    const now = new Date();
-    let rangeLabels: string[] = [];
-    let dateKeys: string[] = [];
-
-    if (period === 'week') {
-      const base = startOfDay(now)!;
-      const day = (base.getDay() + 6) % 7; // Mon=0..Sun=6
-      base.setDate(base.getDate() - day + offset * 7);
-
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(base);
-        d.setDate(base.getDate() + i);
-        rangeLabels.push(d.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2));
-        dateKeys.push(iso(d));
-      }
-
-      const buckets: Record<string, { walking: number; cycling: number }> = {};
-      dateKeys.forEach((k) => (buckets[k] = { walking: 0, cycling: 0 }));
-
-      activities.forEach((a) => {
-        const d = safeDate(a.record_date);
-        const key = iso(d);
-        if (!key || !buckets[key]) return;
-        const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
-        if (a.type === 'Walking') buckets[key].walking += dist;
-        if (a.type === 'Cycling') buckets[key].cycling += dist;
-      });
-
-      return {
-        labels: rangeLabels,
-        wData: dateKeys.map((k) => buckets[k].walking),
-        cData: dateKeys.map((k) => buckets[k].cycling),
-      };
-    }
-
-    if (period === 'month') {
-      const base = new Date(now.getFullYear(), now.getMonth() + offset, 1);
-      const daysInMonth = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
-      const binCount = Math.ceil(daysInMonth / 7);
-      rangeLabels = Array.from({ length: binCount }, (_, i) => `W${i + 1}`);
-
-      const weekBuckets = Array.from({ length: binCount }, () => ({ walking: 0, cycling: 0 }));
-
-      activities.forEach((a) => {
-        const d = safeDate(a.record_date);
-        if (!d) return;
-        const sameMonth =
-          d.getFullYear() === base.getFullYear() && d.getMonth() === base.getMonth();
-        if (!sameMonth) return;
-
-        const day = d.getDate();
-        const weekIdx = Math.min(Math.floor((day - 1) / 7), binCount - 1);
-        const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
-        if (a.type === 'Walking') weekBuckets[weekIdx].walking += dist;
-        if (a.type === 'Cycling') weekBuckets[weekIdx].cycling += dist;
-      });
-
-      return {
-        labels: rangeLabels,
-        wData: weekBuckets.map((b) => b.walking),
-        cData: weekBuckets.map((b) => b.cycling),
-      };
-    }
-
-    const year = now.getFullYear() + offset;
-    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    rangeLabels = monthNames.slice();
-    const buckets: Record<number, { walking: number; cycling: number }> = {};
-    monthNames.forEach((_, i) => (buckets[i] = { walking: 0, cycling: 0 }));
-
-    activities.forEach((a) => {
-      const d = safeDate(a.record_date);
-      if (!d || d.getFullYear() !== year) return;
-      const m = d.getMonth();
-      const dist = Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0;
-      if (a.type === 'Walking') buckets[m].walking += dist;
-      if (a.type === 'Cycling') buckets[m].cycling += dist;
-    });
-
-    return {
-      labels: rangeLabels,
-      wData: monthNames.map((_, i) => buckets[i].walking),
-      cData: monthNames.map((_, i) => buckets[i].cycling),
-    };
-  }, [activities, period, offset]);
-
   useEffect(() => {
-    const totalWalking = activities
-      .filter((a) => a.type === 'Walking')
-      .reduce((s, a) => s + (Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0), 0);
-    const totalCycling = activities
-      .filter((a) => a.type === 'Cycling')
-      .reduce((s, a) => s + (Number.isFinite(a.distance_km) ? Math.max(0, a.distance_km) : 0), 0);
+    const sum = (t: 'Walking' | 'Cycling') =>
+      activities.filter(a => a.type === t).reduce((s, a) => s + (Number(a.distance_km) || 0), 0);
 
-    const walkingPct = Math.min((totalWalking / (user.walk_goal || 100)) * 100, 100);
-    const cyclingPct = Math.min((totalCycling / (user.bic_goal || 100)) * 100, 100);
-    setWalkingProgress(walkingPct);
-    setCyclingProgress(cyclingPct);
+    setWalkingProgress(Math.min((sum('Walking') / (user.walk_goal || 100)) * 100, 100));
+    setCyclingProgress(Math.min((sum('Cycling') / (user.bic_goal || 100)) * 100, 100));
   }, [activities, user]);
 
-  const chartConfig = {
-    backgroundColor: '#ffffff',
-    backgroundGradientFrom: '#ffffff',
-    backgroundGradientTo: '#ffffff',
-    decimalPlaces: period === 'year' ? 0 : 1,
-    color: (o = 1) => `rgba(16,185,129,${o})`,
-    labelColor: () => theme.sub,
-    propsForDots: { r: '3.5', strokeWidth: '2' },
-    propsForBackgroundLines: { strokeDasharray: '' },
-  };
+  /* ----- fetch pie lists once ----- */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setPieLoading(true);
+        const uid = String(user?.user_id ?? user?.id);
+        const [ems, reds] = await Promise.all([
+          fetchEmissionItems(uid).catch(() => []),
+          fetchReductionItems(uid).catch(() => []),
+        ]);
+        if (!cancelled) {
+          setEmissionItems(ems);
+          setReductionItems(reds);
+        }
+      } finally {
+        if (!cancelled) setPieLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
 
-  const periodTitle = useMemo(() => {
-    const now = new Date();
-    if (period === 'week') {
-      const base = startOfDay(now)!;
-      const day = (base.getDay() + 6) % 7;
-      base.setDate(base.getDate() - day + offset * 7);
-      const end = new Date(base);
-      end.setDate(base.getDate() + 6);
-      const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      return `${fmt(base)} – ${fmt(end)}`;
-    }
-    if (period === 'month') {
-      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
-      return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-    }
-    const y = now.getFullYear() + offset;
-    return String(y);
-  }, [period, offset]);
+  /* ----- compute current window & totals ----- */
+  const { start, end } = useMemo(() => getRange(period, offset), [period, offset]);
+
+  const { emissionSum, reductionSum, totalPie, emPct, redPct } = useMemo(() => {
+    const inRange = (v: any) => {
+      const d = safeDate(v);
+      return d && isValidDate(d) && d >= start && d <= end;
+    };
+
+    const eSum = emissionItems.filter(it => inRange(it.record_date))
+                              .reduce((s, it) => s + num(it.point_value), 0);
+    const rSum = reductionItems.filter(it => inRange(it.record_date))
+                               .reduce((s, it) => s + num(it.point_value), 0);
+    const tot  = num(eSum) + num(rSum);
+
+    return {
+      emissionSum: num(eSum),
+      reductionSum: num(rSum),
+      totalPie: num(tot),
+      emPct: tot > 0 ? (num(eSum) / tot) * 100 : 0,
+      redPct: tot > 0 ? (num(rSum) / tot) * 100 : 0,
+    };
+  }, [emissionItems, reductionItems, start, end]);
+
+  // Rounded for legend labels (2 decimals)
+  const emissionRounded = Number(num(emissionSum).toFixed(2));
+  const reductionRounded = Number(num(reductionSum).toFixed(2));
+
+  // Force a fresh mount whenever inputs change (fixes the “doesn’t redraw” issue)
+  const pieKey = `${period}-${offset}-${emissionRounded}-${reductionRounded}`;
+
+  // Android-safe: if only one slice is 0, give it a tiny epsilon so PieChart renders
+  const EPS = 0.0001;
+  const hasData = Number.isFinite(totalPie) && totalPie > 0;
+  const pieEmission  = emissionRounded  <= 0 ? (hasData ? EPS : 0) : emissionRounded;
+  const pieReduction = reductionRounded <= 0 ? (hasData ? EPS : 0) : reductionRounded;
+
+  const { labels, wData, cData, periodTitle } = useDashboardSeries(activities, period, offset);
+  const chartConfig = useMemo(() => baseLineChartConfig(period === 'year' ? 0 : 1), [period]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -244,36 +182,21 @@ export default function Dashboard() {
             <View style={styles.headerSide} />
           </View>
 
-          {/* Card: Line Chart */}
+          {/* ---- Line chart ---- */}
+          <Text style={styles.sectionTitle}>Walking & Cycling Overviews</Text>
+
           <View style={styles.card}>
             <View style={styles.periodRow}>
-              <View style={styles.segment}>
-                {(['week', 'month', 'year'] as Period[]).map((p) => {
-                  const active = p === period;
-                  return (
-                    <TouchableOpacity
-                      key={p}
-                      onPress={() => { setPeriod(p); setOffset(0); }}
-                      style={[styles.segBtn, active && styles.segBtnActive]}
-                    >
-                      <Text style={[styles.segText, active && styles.segTextActive]}>
-                        {p[0].toUpperCase() + p.slice(1)}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <View style={styles.navBtns}>
-                <TouchableOpacity onPress={() => setOffset((o) => o - 1)} style={styles.navBtn}>
-                  <Ionicons name="chevron-back" size={18} color={theme.primaryDark} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setOffset(0)} style={[styles.navBtn, { marginHorizontal: 4 }]}>
-                  <Text style={{ color: theme.primaryDark, fontWeight: '700' }}>This</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setOffset((o) => o + 1)} style={styles.navBtn}>
-                  <Ionicons name="chevron-forward" size={18} color={theme.primaryDark} />
-                </TouchableOpacity>
-              </View>
+              <SegmentedControl
+                items={[{ value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }, { value: 'year', label: 'Year' }]}
+                value={period}
+                onChange={(p) => { setPeriod(p); setOffset(0); }}
+              />
+              <NavPeriodButtons
+                onPrev={() => setOffset(o => o - 1)}
+                onThis={() => setOffset(0)}
+                onNext={() => setOffset(o => o + 1)}
+              />
             </View>
 
             <Text style={styles.periodTitle}>{periodTitle}</Text>
@@ -293,7 +216,7 @@ export default function Dashboard() {
                     ],
                     legend: ['Walking', 'Cycling'],
                   }}
-                  width={INNER_WIDTH}   // ✅ กว้างตามด้านในการ์ด
+                  width={INNER_WIDTH}
                   height={260}
                   chartConfig={chartConfig}
                   style={styles.chart}
@@ -304,36 +227,85 @@ export default function Dashboard() {
             )}
           </View>
 
-          {/* Overall progress */}
+          {/* Progress stats */}
           <View style={styles.progressRow}>
-            <View style={styles.progressCard}>
-              <Text style={styles.progressLabel}>Walk progress</Text>
-              <Text style={styles.progressValue}>{walkingProgress.toFixed(1)}%</Text>
-            </View>
-            <View style={styles.progressCard}>
-              <Text style={styles.progressLabel}>Cycling progress</Text>
-              <Text style={styles.progressValue}>{cyclingProgress.toFixed(1)}%</Text>
-            </View>
+            <ProgressStat label="Walk progress" value={walkingProgress} />
+            <ProgressStat label="Cycling progress" value={cyclingProgress} />
           </View>
 
-          {/* Card: Pie */}
+          {/* ---- Pie ---- */}
+          <Text style={styles.sectionTitle}>Emission vs Reduction</Text>
+
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Emission vs Reduction</Text>
-            <View style={styles.cardChartWrap}>
-              <PieChart
-                data={[
-                  { name: 'Emission', population: Math.max(0.1, emissionData), color: '#9CA3AF', legendFontColor: '#6B7280', legendFontSize: 14 },
-                  { name: 'Reduction', population: Math.max(0.1, reductionData), color: theme.primary, legendFontColor: '#6B7280', legendFontSize: 14 },
-                ]}
-                width={INNER_WIDTH}   // ✅ ใช้ความกว้างจริง
-                height={230}
-                chartConfig={{ backgroundColor: '#fff', color: (o = 1) => `rgba(0,0,0,${o})`, labelColor: () => '#000' }}
-                accessor="population"
-                backgroundColor="transparent"
-                paddingLeft="10"
-                absolute
+            <View style={styles.periodRow}>
+              <SegmentedControl
+                items={[{ value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }, { value: 'year', label: 'Year' }]}
+                value={period}
+                onChange={(p) => { setPeriod(p); setOffset(0); }}
+              />
+              <NavPeriodButtons
+                onPrev={() => setOffset(o => o - 1)}
+                onThis={() => setOffset(0)}
+                onNext={() => setOffset(o => o + 1)}
               />
             </View>
+
+            <Text style={styles.periodTitle}>{periodTitle}</Text>
+
+            <View style={styles.kvRow}>
+              <Text style={styles.kvLabel}>Emission</Text>
+              <Text style={styles.kvValue}>{pctText(emPct)}</Text>
+            </View>
+            <View style={styles.kvRow}>
+              <Text style={styles.kvLabel}>Reduction</Text>
+              <Text style={[styles.kvValue, styles.kvGreen]}>{pctText(redPct)}</Text>
+            </View>
+
+            {pieLoading ? (
+              <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                <ActivityIndicator color={theme.primary} />
+              </View>
+            ) : !hasData ? (
+              <View style={styles.emptyWrap}>
+                <Text style={{ color: theme.sub, textAlign: 'center' }}>
+                  No emission or reduction data for {periodTitle}.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.cardChartWrap}>
+                <PieChart
+                  key={pieKey}             
+                  data={[
+                    {
+                      name: 'Emission',
+                      population: Math.max(EPS, pieEmission),
+                      color: 'rgba(239, 68, 68, 0.85)',
+                      legendFontColor: '#EF4444',
+                      legendFontSize: 14,
+                    },
+                    {
+                      name: 'Reduction',
+                      population: Math.max(EPS, pieReduction),
+                      color: 'rgba(16, 185, 129, 0.9)',
+                      legendFontColor: '#10B981',
+                      legendFontSize: 14,
+                    },
+                  ]}
+                  width={INNER_WIDTH}
+                  height={230}
+                  chartConfig={{
+                    backgroundColor: '#fff',
+                    color: (o = 1) => `rgba(0,0,0,${o})`,
+                    labelColor: () => '#000',
+                    decimalPlaces: 2,
+                  }}
+                  accessor="population"
+                  backgroundColor="transparent"
+                  paddingLeft="10"
+                  absolute
+                />
+              </View>
+            )}
           </View>
         </View>
       </ScrollView>
@@ -347,11 +319,13 @@ const styles = StyleSheet.create({
   headerSide: { width: 28, alignItems: 'flex-start' },
   title: { fontSize: 20, fontWeight: '800', color: theme.primaryDark },
 
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.text, marginTop: 16, marginBottom: 8 },
+
   card: {
     backgroundColor: theme.card,
     borderRadius: 16,
     padding: CARD_HPAD,
-    marginTop: 12,
+    marginTop: 8,
     borderWidth: 1,
     borderColor: theme.border,
     shadowColor: '#000',
@@ -360,48 +334,29 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 3,
   },
-  cardTitle: { fontWeight: '700', color: theme.text, marginBottom: 10, fontSize: 16 },
 
   periodRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  segment: {
-    flexDirection: 'row',
-    backgroundColor: '#FFF',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: theme.border,
-    padding: 4,
-  },
-  segBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999 },
-  segBtnActive: { backgroundColor: theme.primary },
-  segText: { color: theme.primaryDark, fontWeight: '700' },
-  segTextActive: { color: '#FFF' },
-
-  navBtns: { flexDirection: 'row', alignItems: 'center' },
-  navBtn: { borderWidth: 1, borderColor: theme.border, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#FFF' },
   periodTitle: { color: theme.sub, marginTop: 8, fontWeight: '700' },
 
-  /** wrapper ที่ตัดส่วนเกินของกราฟ */
-  cardChartWrap: {
-    marginTop: 8,
-    borderRadius: 12,
-    overflow: 'hidden',      // ✅ กันกราฟล้นออกนอกการ์ด
-    backgroundColor: '#fff',
-    alignSelf: 'center',
-  },
-  chart: {
-    // ไม่ต้องกำหนด width/height ที่นี่แล้ว
-  },
+  cardChartWrap: { marginTop: 8, borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff', alignSelf: 'center' },
+  chart: { alignSelf: 'stretch' },
 
   progressRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
-  progressCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+
+  kvRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 },
+  kvLabel: { color: theme.sub, fontSize: 14 },
+  kvValue: { color: theme.text, fontSize: 16, fontWeight: '800' },
+  kvGreen: { color: theme.primary },
+
+  emptyWrap: {
+    height: 130,
     borderWidth: 1,
     borderColor: theme.border,
-    padding: 14,
+    borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
   },
-  progressLabel: { color: theme.sub, fontWeight: '700' },
-  progressValue: { color: theme.text, fontWeight: '800', fontSize: 20, marginTop: 6 },
 });

@@ -8,51 +8,63 @@ function nowGMT7() {
   return gmt7.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-/* ---------- POST /api/save-cycling ---------- */
+function toNum(v, def = null) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+}
+
+/* =========================================================
+ * POST /api/save-cycling
+ * Body: {
+ *   user_id (required),
+ *   distance_km (required, number),
+ *   title?, description?,
+ *   duration_sec?,
+ *   carbonReduce?   // kg (optional, default 0)
+ * }
+ * Writes to bic_history
+ * ======================================================= */
 exports.saveCycling = async (req, res) => {
   try {
     const {
       title = null,
       description = null,
       distance_km,
-      carbonReduce,       // receive from frontend
+      carbonReduce,         // optional from frontend (kg)
       duration_sec = null,
       user_id,
-    } = req.body;
+    } = req.body || {};
 
-    console.log('[saveCycling] incoming data:', {
-      title,
-      description,
-      distance_km,
-      carbonReduce,
-      duration_sec,
-      user_id,
+    console.log('[saveCycling] incoming:', {
+      title, description, distance_km, carbonReduce, duration_sec, user_id,
     });
 
-    if (!user_id || distance_km === undefined) {
+    if (user_id == null || distance_km == null) {
       return res.status(400).json({ ok: false, message: 'Missing required fields.' });
     }
 
-    // normalize numeric value
-    const carbonValue = Number.isFinite(Number(carbonReduce)) ? Number(carbonReduce) : 0;
+    // coerce numbers
+    const distanceVal = toNum(distance_km, 0);
+    const carbonVal   = toNum(carbonReduce, 0);
+    const durationVal = duration_sec == null ? null : toNum(duration_sec, null);
 
-    const createAt = nowGMT7();
+    const recordAt = nowGMT7();
 
     const [result] = await db.query(
       `INSERT INTO bic_history
          (user_id, title, description, distance_km, carbonReduce, duration_sec, record_date)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [user_id, title, description, distance_km, carbonValue, duration_sec, createAt]
+      [user_id, title, description, distanceVal, carbonVal, durationVal, recordAt]
     );
 
-    console.log('[saveCycling] inserted ID:', result?.insertId, 'carbonReduce:', carbonValue);
+    console.log('[saveCycling] inserted:', { insertId: result?.insertId, carbonReduce: carbonVal });
 
     return res.status(200).json({
       ok: true,
       message: '🚴‍♂️ Cycling activity saved successfully!',
-      record_date: createAt,
+      record_date: recordAt,
       insertId: result?.insertId ?? null,
-      carbonReduce: carbonValue,
+      carbonReduce: carbonVal,
     });
   } catch (err) {
     console.error('❌ Cycling Save Error:', err);
@@ -60,40 +72,39 @@ exports.saveCycling = async (req, res) => {
   }
 };
 
-/* ---------- PATCH /api/cycling/:id/carbon ---------- */
+/* =========================================================
+ * PATCH /api/cycling/:id/carbon
+ * Body: { carbonReduce (required, number in kg) }
+ * Updates carbonReduce for a cycling row
+ * ======================================================= */
 exports.updateCyclingCarbon = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { carbonReduce } = req.body;
+    const { id } = req.params || {};
+    const { carbonReduce } = req.body || {};
 
-    console.log('[updateCyclingCarbon] id:', id, 'carbonReduce:', carbonReduce);
+    console.log('[updateCyclingCarbon] incoming:', { id, carbonReduce });
 
-    if (!id || carbonReduce == null) {
+    const idNum = toNum(id);
+    const carbonVal = toNum(carbonReduce);
+
+    if (!idNum || carbonVal == null) {
       return res.status(400).json({
         ok: false,
         message: 'Missing id or carbonReduce value.',
       });
     }
 
-    const numericValue = Number(carbonReduce);
-    if (!Number.isFinite(numericValue)) {
-      return res.status(400).json({
-        ok: false,
-        message: 'carbonReduce must be a number.',
-      });
-    }
-
     const [result] = await db.query(
       `UPDATE bic_history SET carbonReduce = ? WHERE id = ?`,
-      [numericValue, id]
+      [carbonVal, idNum]
     );
 
     return res.status(200).json({
       ok: true,
       message: '✅ Carbon reduction updated successfully (cycling)',
-      affectedRows: result.affectedRows,
-      id,
-      carbonReduce: numericValue,
+      affectedRows: result?.affectedRows ?? 0,
+      id: idNum,
+      carbonReduce: carbonVal,
     });
   } catch (err) {
     console.error('❌ updateCyclingCarbon error:', err);

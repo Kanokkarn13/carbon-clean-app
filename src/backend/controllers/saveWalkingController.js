@@ -1,3 +1,4 @@
+// src/backend/controllers/saveWalkingController.js
 const db = require('../config/db');
 
 /* ---------- helpers ---------- */
@@ -7,20 +8,36 @@ function nowGMT7() {
   return gmt7.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-/* ---------- POST /api/save-walking ---------- */
+function toNum(v, def = null) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : def;
+}
+
+/* =========================================================
+ * POST /api/save-walking
+ * Body: {
+ *   user_id (required),
+ *   distance_km (required, number),
+ *   title?, description?,
+ *   step_total?, duration_sec?,
+ *   carbonReduce?  // kg (preferably)
+ * }
+ * Writes to walk_history
+ * ======================================================= */
 exports.saveWalking = async (req, res) => {
   try {
     const {
       title = null,
       description = null,
       distance_km,
-      carbonReduce,  // ✅ receive from frontend
+      carbonReduce,          // may be undefined → fallback 0
       step_total = null,
       duration_sec = null,
       user_id,
-    } = req.body;
+    } = req.body || {};
 
-    console.log('[saveWalking] incoming data:', {
+    // log input
+    console.log('[saveWalking] incoming:', {
       title,
       description,
       distance_km,
@@ -30,30 +47,32 @@ exports.saveWalking = async (req, res) => {
       user_id,
     });
 
-    if (!user_id || distance_km === undefined) {
+    // validate required
+    if (user_id == null || distance_km == null) {
       return res.status(400).json({ ok: false, message: 'Missing required fields.' });
     }
 
-    // fallback when carbonReduce missing
-    const carbonValue = Number.isFinite(Number(carbonReduce))
-      ? Number(carbonReduce)
-      : 0;
+    // coerce numbers
+    const distanceVal   = toNum(distance_km, 0);
+    const carbonValue   = toNum(carbonReduce, 0); // if not sent, store 0
+    const stepsVal      = step_total == null ? null : toNum(step_total, null);
+    const durationVal   = duration_sec == null ? null : toNum(duration_sec, null);
 
-    const createAt = nowGMT7();
+    const recordAt = nowGMT7();
 
     const [result] = await db.query(
       `INSERT INTO walk_history
          (user_id, title, description, distance_km, carbonReduce, step_total, duration_sec, record_date)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [user_id, title, description, distance_km, carbonValue, step_total, duration_sec, createAt]
+      [user_id, title, description, distanceVal, carbonValue, stepsVal, durationVal, recordAt]
     );
 
-    console.log('[saveWalking] inserted ID:', result?.insertId, 'carbonReduce:', carbonValue);
+    console.log('[saveWalking] inserted:', { insertId: result?.insertId, carbonReduce: carbonValue });
 
     return res.status(200).json({
       ok: true,
       message: '🚶‍♀️ Walking activity saved successfully!',
-      record_date: createAt,
+      record_date: recordAt,
       insertId: result?.insertId ?? null,
       carbonReduce: carbonValue,
     });
@@ -63,15 +82,22 @@ exports.saveWalking = async (req, res) => {
   }
 };
 
-/* ---------- PATCH /api/walking/:id/carbon ---------- */
+/* =========================================================
+ * PATCH /api/walking/:id/carbon
+ * Body: { carbonReduce (required, number) }
+ * Updates carbonReduce for a walking row
+ * ======================================================= */
 exports.updateWalkingCarbon = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { carbonReduce } = req.body;
+    const { id } = req.params || {};
+    const { carbonReduce } = req.body || {};
 
-    console.log('[updateWalkingCarbon] id:', id, 'carbonReduce:', carbonReduce);
+    console.log('[updateWalkingCarbon] incoming:', { id, carbonReduce });
 
-    if (!id || carbonReduce == null) {
+    const idNum = toNum(id);
+    const carbonVal = toNum(carbonReduce);
+
+    if (!idNum || carbonVal == null) {
       return res.status(400).json({
         ok: false,
         message: 'Missing id or carbonReduce value.',
@@ -80,15 +106,15 @@ exports.updateWalkingCarbon = async (req, res) => {
 
     const [result] = await db.query(
       `UPDATE walk_history SET carbonReduce = ? WHERE id = ?`,
-      [carbonReduce, id]
+      [carbonVal, idNum]
     );
 
     return res.status(200).json({
       ok: true,
       message: '✅ Carbon reduction updated successfully (walking)',
-      affectedRows: result.affectedRows,
-      id,
-      carbonReduce,
+      affectedRows: result?.affectedRows ?? 0,
+      id: idNum,
+      carbonReduce: carbonVal,
     });
   } catch (err) {
     console.error('❌ updateWalkingCarbon error:', err);
