@@ -2,21 +2,31 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-/* ========= Base URL ========= */
-const getBaseUrl = () => {
-  const envUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (envUrl && envUrl.trim()) {
-    return envUrl.replace(/\/+$/, ''); // strip trailing slashes
-  }
-  if (__DEV__) {
-    if (Platform.OS === 'android') return 'http://10.0.2.2:3000'; // Android emulator -> host
-    return 'http://192.168.0.102:3000'; // iOS sim / device on LAN (adjust to your PC IP)
-  }
-  return 'https://your-prod-domain.com';
-};
+/* ========= Base URL & helper ========= */
+// ENV ไม่ต้องมี /api และไม่ควรมี / ท้าย
+const RAW_ENV = process.env.EXPO_PUBLIC_API_URL?.trim();
 
-const BASE_URL = getBaseUrl();
-export const API_BASE = BASE_URL; // for debugging
+// fallback สำหรับ dev: Android emulator ใช้ 10.0.2.2, iOS/Device ใช้ IP LAN
+const RAW_FALLBACK =
+  Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://192.168.0.102:3000';
+
+// ถ้าไม่มี ENV ให้ใช้ fallback; จากนั้นตัด / ท้าย
+export const API_BASE = (RAW_ENV && RAW_ENV.length ? RAW_ENV : RAW_FALLBACK).replace(/\/+$/, '');
+
+/**
+ * ต่อ URL ปลายทางแบบปลอดภัย:
+ * - ใส่ `/api` ให้อัตโนมัติ หาก path ไม่ได้ขึ้นต้นด้วย `/api`
+ * - รองรับ path ที่มีหรือไม่มี `/` นำหน้า
+ * - ตัวอย่าง:
+ *    api('/set-goal')        => http://.../api/set-goal
+ *    api('/api/set-goal')    => http://.../api/set-goal
+ *    api('set-goal')         => http://.../api/set-goal
+ */
+const api = (path: string) => {
+  const p = path.startsWith('/') ? path : `/${path}`;
+  const withApi = p.startsWith('/api') ? p : `/api${p}`;
+  return `${API_BASE}${withApi}`;
+};
 
 /* ========= Types ========= */
 export type ApiUser = {
@@ -35,8 +45,8 @@ export type ApiUser = {
 export type AuthResponse = {
   success?: boolean;
   message?: string;
-  data?: ApiUser | any; // your backend returns user in data
-  user?: ApiUser | any; // just in case another env returns user directly
+  data?: ApiUser | any; // บาง env ส่ง user ใน data
+  user?: ApiUser | any; // เผื่อบางที่ส่งเป็น user ตรง ๆ
   token?: string;
 };
 
@@ -52,7 +62,8 @@ async function request<TResp, TBody = unknown>(
   body?: TBody,
   init?: RequestInit
 ): Promise<TResp> {
-  const url = `${BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+  // รองรับทั้ง '/set-goal' และ '/api/set-goal'
+  const url = api(endpoint);
 
   const finalInit: RequestInit = {
     method: init?.method ?? 'POST',
@@ -103,13 +114,13 @@ async function request<TResp, TBody = unknown>(
   }
 }
 
-/* ========= Public API functions (match your server) ========= */
+/* ========= Public API functions ========= */
 
-// 🔐 Login — your server uses /api/check-user (NOT /api/login)
+// 🔐 Login — backend ใช้ /api/check-user
 export const login = (email: string, password: string) =>
-  request<AuthResponse>('/api/check-user', { email, password });
+  request<AuthResponse>('/check-user', { email, password });
 
-// 📝 Register — expects fname (not "name")
+// 📝 Register — ใช้ fname/lname
 export const register = (
   fname: string,
   lname: string,
@@ -117,7 +128,7 @@ export const register = (
   password: string,
   phone: string
 ) =>
-  request<AuthResponse>('/api/register', {
+  request<AuthResponse>('/register', {
     fname,
     lname,
     email,
@@ -127,11 +138,14 @@ export const register = (
 
 // 👤 Update user
 export const updateUser = (userData: Record<string, unknown>) =>
-  request<BasicResponse<ApiUser>>('/api/update-user', userData);
+  request<BasicResponse<ApiUser>>('/update-user', userData);
 
 // 🎯 Set goal
-export const setGoal = (payload: { user_id: number; goalType: 'walking' | 'bicycle' | string; value: number }) =>
-  request<BasicResponse<ApiUser>>('/api/set-goal', payload);
+export const setGoal = (payload: {
+  user_id: number;
+  goalType: 'walking' | 'bicycle' | string;
+  value: number;
+}) => request<BasicResponse<ApiUser>>('/set-goal', payload);
 
 /* ========= Helper ========= */
 export function pickUser(
@@ -142,18 +156,15 @@ export function pickUser(
   return (resp as any).data || (resp as any).user || null;
 }
 
-/* ========= Storage Helpers (NEW) ========= */
-// Keys
+/* ========= Storage Helpers ========= */
 const USER_KEY = 'user';
 const TOKEN_KEY = 'token';
 
-/** Save user (and optional token) after login/register */
 export async function saveUser(user: ApiUser | any, token?: string) {
   await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
   if (token) await AsyncStorage.setItem(TOKEN_KEY, token);
 }
 
-/** Get the persisted user for screens like Profile */
 export async function getUser(): Promise<ApiUser | any | null> {
   try {
     const json = await AsyncStorage.getItem(USER_KEY);
@@ -165,7 +176,6 @@ export async function getUser(): Promise<ApiUser | any | null> {
   }
 }
 
-/** Get saved auth token, if you use one */
 export async function getToken(): Promise<string | null> {
   try {
     return (await AsyncStorage.getItem(TOKEN_KEY)) || null;
@@ -174,7 +184,6 @@ export async function getToken(): Promise<string | null> {
   }
 }
 
-/** Clear user + token */
 export async function logout() {
   await AsyncStorage.multiRemove([USER_KEY, TOKEN_KEY]);
 }

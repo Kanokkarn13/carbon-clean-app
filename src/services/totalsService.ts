@@ -1,6 +1,8 @@
 // src/services/totalsService.ts
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
-const api = (p: string) => `${BASE_URL}/api${p}`;
+/** Base URL from ENV (no /api, no trailing slash) */
+const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+const API_BASE = RAW_BASE.replace(/\/+$/, '');
+const api = (p: string) => `${API_BASE}/api${p}`;
 
 async function getJson(url: string) {
   const res = await fetch(url);
@@ -102,7 +104,7 @@ export async function fetchReductionItems(uid: string | number) {
   }));
 }
 
-/* Optional: simple “total” helpers (if you need them elsewhere) */
+/* Optional: simple “total” helpers */
 export async function fetchEmissionTotal(uid: string | number) {
   const items = await fetchEmissionItems(uid);
   return items.reduce((s, it) => s + coerceNumber(it.point_value), 0);

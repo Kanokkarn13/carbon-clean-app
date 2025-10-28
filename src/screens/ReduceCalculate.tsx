@@ -27,9 +27,10 @@ const theme = {
 const VEHICLES = ['Car', 'Motorbike', 'Bus', 'Taxis'] as const;
 const FUELS = ['Petrol', 'Diesel', 'Hybrid', 'Unknown'] as const;
 
-// ---- API origin (DON'T put /api in ENV) ----
-const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:3000';
-const api = (p: string) => `${API_ORIGIN}/api${p}`;
+// ---- API origin (ENV; don't put /api and no trailing slash) ----
+const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+const API_BASE = RAW_BASE.replace(/\/+$/, '');     // strip trailing slashes
+const api = (p: string) => `${API_BASE}/api${p}`;
 
 function Chip({
   label,
@@ -175,7 +176,6 @@ function ResultBanner({
 export default function ReduceCalculate() {
   const navigation = useNavigation();
   const route = useRoute<any>();
-  // allow passing user from initialParams
   const user = (route?.params && (route.params as any).user) || undefined;
 
   const [fromVehicle, setFromVehicle] = useState<(typeof VEHICLES)[number]>('Car');

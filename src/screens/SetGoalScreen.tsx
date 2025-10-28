@@ -32,6 +32,11 @@ const theme = {
   chip: '#DCFCE7',
 };
 
+/** ---------- API BASE from ENV (no /api, no trailing slash) ---------- */
+const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+const API_BASE = RAW_BASE.replace(/\/+$/, '');
+const api = (p: string) => `${API_BASE}/api${p}`;
+
 const SetGoalScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute();
@@ -69,7 +74,7 @@ const SetGoalScreen: React.FC = () => {
     }
 
     try {
-      const response = await fetch('http://192.168.0.102:3000/api/set-goal', {
+      const response = await fetch(api('/set-goal'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: user.user_id, goalType, value: km }),

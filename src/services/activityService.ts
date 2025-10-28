@@ -6,9 +6,18 @@ export type Activity = {
   created_at?: string | null;
 };
 
+/** API base from ENV (no /api, no trailing slash) */
+const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+const API_BASE = RAW_BASE.replace(/\/+$/, '');
+const api = (p: string) => `${API_BASE}/api${p}`;
+
 export async function fetchRecentActivities(userId: number | string) {
-  const res = await fetch(`http://192.168.0.102:3000/api/recent-activity/${userId}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const url = api(`/recent-activity/${encodeURIComponent(String(userId))}`);
+  const res = await fetch(url);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `HTTP ${res.status}`);
+  }
   const json = await res.json();
-  return Array.isArray(json.activities) ? (json.activities as Activity[]) : [];
+  return Array.isArray(json?.activities) ? (json.activities as Activity[]) : [];
 }

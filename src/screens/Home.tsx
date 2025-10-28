@@ -1,6 +1,15 @@
 // src/screens/Home.tsx
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, ImageBackground, Image, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  ImageBackground,
+  Image,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused, useRoute } from '@react-navigation/native';
@@ -34,32 +43,69 @@ export type Activity = {
   carbon_reduce_g?: number;    // g  (derived if only kg exists)
 };
 
-type Props = { navigation: HomeNav; user?: HomeUser; };
+type Props = { navigation: HomeNav; user?: HomeUser };
 
-// .env (recommended): EXPO_PUBLIC_API_URL=http://192.168.0.102:3000
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+// ===== API base from ENV (Expo) =====
+// .env: EXPO_PUBLIC_API_URL=https://<your-ngrok>.ngrok-free.dev  (no trailing / and no /api)
+const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+const BASE_URL = RAW_BASE.replace(/\/+$/, ''); // strip trailing slashes
 const api = (p: string) => `${BASE_URL}/api${p}`;
 
-const theme = { primary: '#10B981', primaryDark: '#059669', bg: '#F6FAF8', card: '#FFFFFF', text: '#0B1721', sub: '#6B7280', border: '#E5E7EB', chip: '#ECFDF5', danger: '#DC2626' };
+if (__DEV__) {
+  // eslint-disable-next-line no-console
+  console.log('[BASE_URL]', BASE_URL);
+}
 
-function toActivityType(input: unknown): ActivityType { const t = String(input ?? '').toLowerCase(); if (t.includes('cycl')) return 'Cycling'; return 'Walking'; }
+const theme = {
+  primary: '#10B981',
+  primaryDark: '#059669',
+  bg: '#F6FAF8',
+  card: '#FFFFFF',
+  text: '#0B1721',
+  sub: '#6B7280',
+  border: '#E5E7EB',
+  chip: '#ECFDF5',
+  danger: '#DC2626',
+};
+
+function toActivityType(input: unknown): ActivityType {
+  const t = String(input ?? '').toLowerCase();
+  if (t.includes('cycl')) return 'Cycling';
+  return 'Walking';
+}
 
 /** Normalize activity payload from various backends. */
 function normalizeActivities(raw: any): Activity[] {
-  const arr = (Array.isArray(raw) && raw) || (Array.isArray(raw?.activities) && raw.activities) || (Array.isArray(raw?.data) && raw.data) || (Array.isArray(raw?.results) && raw.results) || (Array.isArray(raw?.items) && raw.items) || [];
+  const arr =
+    (Array.isArray(raw) && raw) ||
+    (Array.isArray(raw?.activities) && raw.activities) ||
+    (Array.isArray(raw?.data) && raw.data) ||
+    (Array.isArray(raw?.results) && raw.results) ||
+    (Array.isArray(raw?.items) && raw.items) ||
+    [];
   const out: Activity[] = arr.map((r: any): Activity => {
     const type = toActivityType(r?.type ?? r?.activity_type);
 
     // distance -> km
     let distance_km = 0;
     if (r?.distance_km != null) distance_km = Number(r.distance_km);
-    else if (r?.distance != null) distance_km = Number(r.distance) > 1000 ? Number(r.distance) / 1000 : Number(r.distance);
+    else if (r?.distance != null)
+      distance_km = Number(r.distance) > 1000 ? Number(r.distance) / 1000 : Number(r.distance);
     else if (r?.meters != null) distance_km = Number(r.meters) / 1000;
     else if (r?.km != null) distance_km = Number(r.km);
     else if (r?.miles != null) distance_km = Number(r.miles) * 1.60934;
 
     // steps
-    const step_total = r?.step_total != null ? Number(r.step_total) : r?.steps != null ? Number(r.steps) : r?.step_count != null ? Number(r.step_count) : r?.stepCount != null ? Number(r.stepCount) : undefined;
+    const step_total =
+      r?.step_total != null
+        ? Number(r.step_total)
+        : r?.steps != null
+        ? Number(r.steps)
+        : r?.step_count != null
+        ? Number(r.step_count)
+        : r?.stepCount != null
+        ? Number(r.stepCount)
+        : undefined;
 
     // duration (sec)
     let duration_sec: number | undefined;
@@ -71,26 +117,69 @@ function normalizeActivities(raw: any): Activity[] {
       if (typeof r.duration === 'string' && r.duration.includes(':')) {
         const [h = '0', m = '0', s = '0'] = r.duration.split(':');
         duration_sec = +h * 3600 + +m * 60 + +s;
-      } else { duration_sec = Number(r.duration); }
+      } else {
+        duration_sec = Number(r.duration);
+      }
     }
 
     const record_date = r?.record_date ?? r?.date ?? r?.recorded_at ?? r?.start_time;
 
-    const title = r?.title ?? r?.name ?? r?.activity_name ?? r?.workout_name ?? `${type}${distance_km ? ` ${distance_km.toFixed(2)} km` : ''}`;
+    const title =
+      r?.title ??
+      r?.name ??
+      r?.activity_name ??
+      r?.workout_name ??
+      `${type}${distance_km ? ` ${distance_km.toFixed(2)} km` : ''}`;
 
-    const description = r?.description ?? r?.desciption ?? r?.note ?? r?.remarks ?? r?.detail ?? undefined;
+    const description =
+      r?.description ??
+      r?.desciption ??
+      r?.note ??
+      r?.remarks ??
+      r?.detail ??
+      undefined;
 
     // carbon
-    const carbonReduceKgRaw = r?.carbonReduce != null ? Number(r.carbonReduce) : r?.carbon_reduce_kg != null ? Number(r.carbon_reduce_kg) : undefined;
-    const carbonReduceGRaw = r?.carbon_reduce_g != null ? Number(r.carbon_reduce_g) : undefined;
+    const carbonReduceKgRaw =
+      r?.carbonReduce != null
+        ? Number(r.carbonReduce)
+        : r?.carbon_reduce_kg != null
+        ? Number(r.carbon_reduce_kg)
+        : undefined;
+    const carbonReduceGRaw =
+      r?.carbon_reduce_g != null ? Number(r.carbon_reduce_g) : undefined;
 
-    const carbon_reduce_kg = Number.isFinite(carbonReduceKgRaw as number) ? (carbonReduceKgRaw as number) : Number.isFinite(carbonReduceGRaw as number) ? (carbonReduceGRaw as number) / 1000 : undefined;
-    const carbon_reduce_g = Number.isFinite(carbonReduceGRaw as number) ? (carbonReduceGRaw as number) : Number.isFinite(carbon_reduce_kg as number) ? (carbon_reduce_kg as number) * 1000 : undefined;
+    const carbon_reduce_kg = Number.isFinite(carbonReduceKgRaw as number)
+      ? (carbonReduceKgRaw as number)
+      : Number.isFinite(carbonReduceGRaw as number)
+      ? (carbonReduceGRaw as number) / 1000
+      : undefined;
 
-    return { type, title, description, distance_km: Number(distance_km ?? 0) || 0, step_total, duration_sec, record_date, id: r?.id ?? r?._id, carbonReduce: carbon_reduce_kg, carbon_reduce_kg, carbon_reduce_g };
+    const carbon_reduce_g = Number.isFinite(carbonReduceGRaw as number)
+      ? (carbonReduceGRaw as number)
+      : Number.isFinite(carbon_reduce_kg as number)
+      ? (carbon_reduce_kg as number) * 1000
+      : undefined;
+
+    return {
+      type,
+      title,
+      description,
+      distance_km: Number(distance_km ?? 0) || 0,
+      step_total,
+      duration_sec,
+      record_date,
+      id: r?.id ?? r?._id,
+      carbonReduce: carbon_reduce_kg,
+      carbon_reduce_kg,
+      carbon_reduce_g,
+    };
   });
 
-  if (__DEV__ && out.length) { console.log('[Home] normalizeActivities sample:', out[0]); }
+  if (__DEV__ && out.length) {
+    // eslint-disable-next-line no-console
+    console.log('[Home] normalizeActivities sample:', out[0]);
+  }
   return out;
 }
 
@@ -109,7 +198,11 @@ function parseRecordDate(input: any): Date | undefined {
   if (!input) return undefined;
   if (input instanceof Date) return input;
   if (typeof input === 'number') return new Date(input < 1e11 ? input * 1000 : input);
-  if (typeof input === 'string') { const s = input.trim(); if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) return new Date(s.replace(' ', 'T')); return new Date(s); }
+  if (typeof input === 'string') {
+    const s = input.trim();
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) return new Date(s.replace(' ', 'T'));
+    return new Date(s);
+  }
   return undefined;
 }
 
@@ -142,21 +235,28 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const [reductionLoading, setReductionLoading] = useState<boolean>(false);
 
   // Accept user_id or id
-  const uid = useMemo(() => { if (!user) return undefined; const v = user.user_id ?? (user as any).id; return v != null ? String(v) : undefined; }, [user]);
+  const uid = useMemo(() => {
+    if (!user) return undefined;
+    const v = user.user_id ?? (user as any).id;
+    return v != null ? String(v) : undefined;
+  }, [user]);
 
   /** ---- Fetch saved emissions and sum point_value ---- */
   const fetchEmissionTotal = useCallback(async () => {
-    if (!uid) { setTotalEmission(0); return; }
+    if (!uid) {
+      setTotalEmission(0);
+      return;
+    }
     setEmissionLoading(true);
     try {
-      const res = await fetch(api(`/saved/${encodeURIComponent(uid)}`));
+      const res = await fetch(api(`/saved/${encodeURIComponent(uid)}`), { keepalive: true });
       const text = await res.text();
       if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
       const json = text ? JSON.parse(text) : { items: [] };
       const items: any[] = Array.isArray(json?.items) ? json.items : [];
       const sum = items.reduce((acc, it) => acc + Number(it?.point_value || 0), 0);
       setTotalEmission(sum);
-    } catch (e) {
+    } catch {
       setTotalEmission(0);
     } finally {
       setEmissionLoading(false);
@@ -165,64 +265,104 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
   /** ---- Fetch saved reductions and sum point_value ---- */
   const fetchReductionTotal = useCallback(async () => {
-    if (!uid) { setTotalReduction(0); return; }
+    if (!uid) {
+      setTotalReduction(0);
+      return;
+    }
     setReductionLoading(true);
     try {
-      const res = await fetch(api(`/reduction/saved/${encodeURIComponent(uid)}`));
+      const res = await fetch(api(`/reduction/saved/${encodeURIComponent(uid)}`), {
+        keepalive: true,
+      });
       const text = await res.text();
       if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
       const json = text ? JSON.parse(text) : { items: [] };
       const items: any[] = Array.isArray(json?.items) ? json.items : [];
       const sum = items.reduce((acc, it) => acc + Number(it?.point_value || 0), 0);
       setTotalReduction(sum);
-    } catch (e) {
+    } catch {
       setTotalReduction(0);
     } finally {
       setReductionLoading(false);
     }
   }, [uid]);
 
-  useEffect(() => { if (isFocused) { fetchEmissionTotal(); fetchReductionTotal(); } }, [isFocused, fetchEmissionTotal, fetchReductionTotal]);
+  useEffect(() => {
+    if (isFocused) {
+      fetchEmissionTotal();
+      fetchReductionTotal();
+    }
+  }, [isFocused, fetchEmissionTotal, fetchReductionTotal]);
 
   /** ---- Recent activities (walking/cycling) ---- */
   useEffect(() => {
     const fetchActivities = async () => {
-      if (!uid || !isFocused) { if (!uid) setActivities([]); return; }
+      if (!uid || !isFocused) {
+        if (!uid) setActivities([]);
+        return;
+      }
       setLoading(true);
 
-      const tryUrls = [`${BASE_URL}/api/recent-activity/full/${encodeURIComponent(uid)}`, `${BASE_URL}/api/recent-activity/${encodeURIComponent(uid)}`];
-      const urlPost = `${BASE_URL}/api/recent-activity`;
+      const tryUrls = [
+        api(`/recent-activity/full/${encodeURIComponent(uid)}`),
+        api(`/recent-activity/${encodeURIComponent(uid)}`),
+      ];
+      const urlPost = api(`/recent-activity`);
 
       try {
         let data: any | undefined;
 
         for (const url of tryUrls) {
           try {
-            const res = await fetch(url);
+            const res = await fetch(url, { keepalive: true });
             if (!res.ok) continue;
             const j = await res.json();
-            const arr = (Array.isArray(j) && j) || (Array.isArray(j?.activities) && j.activities) || (Array.isArray(j?.data) && j.data) || (Array.isArray(j?.results) && j.results) || (Array.isArray(j?.items) && j.items) || [];
-            if (arr.length >= 0) { data = j; break; }
+            const arr =
+              (Array.isArray(j) && j) ||
+              (Array.isArray(j?.activities) && j.activities) ||
+              (Array.isArray(j?.data) && j.data) ||
+              (Array.isArray(j?.results) && j.results) ||
+              (Array.isArray(j?.items) && j.items) ||
+              [];
+            if (arr.length >= 0) {
+              data = j;
+              break;
+            }
           } catch {}
         }
 
         if (!data) {
-          const resPost = await fetch(urlPost, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: uid }) });
+          const resPost = await fetch(urlPost, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: uid }),
+            keepalive: true,
+          });
           if (resPost.ok) data = await resPost.json();
         }
 
         const list = normalizeActivities(data || []);
-        if (__DEV__) { console.log('[Home] activities normalized[0]', list[0]); }
+        if (__DEV__) {
+          // eslint-disable-next-line no-console
+          console.log('[Home] activities normalized[0]', list[0]);
+        }
         setActivities(list.slice(0, 10));
-      } catch { setActivities([]); } finally { setLoading(false); }
+      } catch {
+        setActivities([]);
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchActivities();
   }, [isFocused, uid]);
 
-  const handleActivityPress = () => navigation.navigate('Calculation', { user });
+  const handleActivityPress = () => (navigation as any).navigate('Calculation', { user });
 
-  const fullName = user?.fname || user?.lname ? `${user?.fname ?? ''} ${user?.lname ?? ''}`.trim() : 'Guest';
+  const fullName =
+    user?.fname || user?.lname
+      ? `${user?.fname ?? ''} ${user?.lname ?? ''}`.trim()
+      : 'Guest';
 
   // --- total comparison (Reduction vs Emission) ---
   const diff = totalReduction - totalEmission;
@@ -236,7 +376,11 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <Image
-              source={{ uri: user?.profile_picture || 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }}
+              source={{
+                uri:
+                  user?.profile_picture ||
+                  'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+              }}
               style={styles.avatar}
             />
             <View>
@@ -252,8 +396,18 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
         {/* Task / Goal card */}
         <View style={styles.card}>
-          <ImageBackground source={require('../../assets/trees.png')} style={styles.taskBg} imageStyle={{ borderRadius: 16, opacity: 0.12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+          <ImageBackground
+            source={require('../../assets/trees.png')}
+            style={styles.taskBg}
+            imageStyle={{ borderRadius: 16, opacity: 0.12 }}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
               <View>
                 <Text style={styles.cardTitle}>Complete your tasks</Text>
                 <Text style={styles.progressBig}>0%</Text>
@@ -261,7 +415,11 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
                   <View style={[styles.progressBarFill, { width: '0%' }]} />
                 </View>
               </View>
-              <TouchableOpacity style={styles.pillBtn} onPress={() => navigation.navigate('SetGoal', { user })} activeOpacity={0.9}>
+              <TouchableOpacity
+                style={styles.pillBtn}
+                onPress={() => (navigation as any).navigate('SetGoal', { user })}
+                activeOpacity={0.9}
+              >
                 <Ionicons name="flag-outline" size={16} color={theme.primaryDark} />
                 <Text style={styles.pillBtnText}>Set your goal</Text>
               </TouchableOpacity>
@@ -271,18 +429,36 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
         {/* Quick actions */}
         <View style={styles.quickRow}>
-          <TouchableOpacity style={styles.quickCard} onPress={() => navigation.navigate('Dashboard', { user })} activeOpacity={0.9}>
-            <View style={styles.quickIcon}><Ionicons name="speedometer-outline" size={20} color={theme.primaryDark} /></View>
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => (navigation as any).navigate('Dashboard', { user })}
+            activeOpacity={0.9}
+          >
+            <View style={styles.quickIcon}>
+              <Ionicons name="speedometer-outline" size={20} color={theme.primaryDark} />
+            </View>
             <Text style={styles.quickLabel}>Dashboard</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.quickCard} onPress={() => navigation.navigate('Calculation', { user })} activeOpacity={0.9}>
-            <View style={styles.quickIcon}><Ionicons name="calculator-outline" size={20} color={theme.primaryDark} /></View>
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => (navigation as any).navigate('Calculation', { user })}
+            activeOpacity={0.9}
+          >
+            <View style={styles.quickIcon}>
+              <Ionicons name="calculator-outline" size={20} color={theme.primaryDark} />
+            </View>
             <Text style={styles.quickLabel}>Calculate</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.quickCard} onPress={() => navigation.navigate('SetGoal', { user })} activeOpacity={0.9}>
-            <View style={styles.quickIcon}><Ionicons name="leaf-outline" size={20} color={theme.primaryDark} /></View>
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => (navigation as any).navigate('SetGoal', { user })}
+            activeOpacity={0.9}
+          >
+            <View style={styles.quickIcon}>
+              <Ionicons name="leaf-outline" size={20} color={theme.primaryDark} />
+            </View>
             <Text style={styles.quickLabel}>Goals</Text>
           </TouchableOpacity>
         </View>
@@ -290,15 +466,32 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
         {/* Activity summary */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Activity</Text>
-          <TouchableOpacity style={styles.activityBox} onPress={handleActivityPress} activeOpacity={0.9}>
+          <TouchableOpacity
+            style={styles.activityBox}
+            onPress={() => (navigation as any).navigate('Calculation', { user })}
+            activeOpacity={0.9}
+          >
             <View style={styles.co2Circle}>
               <Ionicons name="trending-down-outline" size={18} color={theme.primary} />
               <Text style={styles.co2XX}>Calculate</Text>
             </View>
             <View style={styles.activityInfo}>
-              <View style={styles.statRow}><Text style={styles.statLabel}>Emission</Text><Text style={styles.statValue}>{emissionLoading ? '…' : `${totalEmission.toFixed(2)} kgCO₂e`}</Text></View>
-              <View style={styles.statRow}><Text style={styles.statLabel}>Reduction</Text><Text style={styles.statPositive}>{reductionLoading ? '…' : `${totalReduction.toFixed(2)} kgCO₂e`}</Text></View>
-              <View style={styles.statRow}><Text style={styles.statLabel}>Total</Text><Text style={[styles.statValue, diffColor]}>{diffText}</Text></View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Emission</Text>
+                <Text style={styles.statValue}>
+                  {emissionLoading ? '…' : `${totalEmission.toFixed(2)} kgCO₂e`}
+                </Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Reduction</Text>
+                <Text style={styles.statPositive}>
+                  {reductionLoading ? '…' : `${totalReduction.toFixed(2)} kgCO₂e`}
+                </Text>
+              </View>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Total</Text>
+                <Text style={[styles.statValue, diffColor]}>{diffText}</Text>
+              </View>
             </View>
           </TouchableOpacity>
         </View>
@@ -307,12 +500,18 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Recent Activity</Text>
           {loading ? (
-            <View style={{ paddingVertical: 16, alignItems: 'center' }}><ActivityIndicator color={theme.primary} /></View>
+            <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+              <ActivityIndicator color={theme.primary} />
+            </View>
           ) : activities.length === 0 ? (
-            <View style={styles.emptyState}><Ionicons name="time-outline" size={18} color={theme.sub} /><Text style={styles.emptyText}>No recent activity yet</Text></View>
+            <View style={styles.emptyState}>
+              <Ionicons name="time-outline" size={18} color={theme.sub} />
+              <Text style={styles.emptyText}>No recent activity yet</Text>
+            </View>
           ) : (
             activities.map((activity, idx) => {
-              const iconName = activity.type === 'Cycling' ? 'bicycle-outline' : 'walk-outline';
+              const iconName =
+                activity.type === 'Cycling' ? ('bicycle-outline' as const) : ('walk-outline' as const);
               return (
                 <TouchableOpacity
                   key={`${activity.type}-${activity.id ?? idx}-${activity.record_date ?? idx}`}
@@ -320,10 +519,14 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
                   activeOpacity={0.9}
                   onPress={() => (navigation as any).navigate('RecentAct', { activity })}
                 >
-                  <View style={styles.recentIcon}><Ionicons name={iconName as any} size={18} color={theme.primaryDark} /></View>
+                  <View style={styles.recentIcon}>
+                    <Ionicons name={iconName} size={18} color={theme.primaryDark} />
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.recentTitle}>{activity.title || activity.type}</Text>
-                    <Text style={styles.recentSub}>{formatDistance(activity.distance_km)} · {formatWhen(activity.record_date)}</Text>
+                    <Text style={styles.recentSub}>
+                      {formatDistance(activity.distance_km)} · {formatWhen(activity.record_date)}
+                    </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={theme.border} />
                 </TouchableOpacity>
@@ -334,7 +537,9 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
         {__DEV__ && (
           <View style={{ marginTop: 12, alignItems: 'center' }}>
-            <Text style={{ color: theme.sub, fontSize: 12 }}>user_id: {user?.user_id ?? '—'} | focused: {String(isFocused)} | API: {BASE_URL}</Text>
+            <Text style={{ color: theme.sub, fontSize: 12 }}>
+              user_id: {user?.user_id ?? '—'} | focused: {String(isFocused)} | API: {BASE_URL}
+            </Text>
           </View>
         )}
       </ScrollView>

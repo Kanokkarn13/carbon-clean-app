@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: carbon-clean-server
+    env: node
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "node src/index.js"
+    autoDeploy: true
+    healthCheckPath: "/api/health"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # ค่าต่อไปนี้จะดึงจาก Environment Dashboard
+      - key: DB_HOST
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_PORT
+        sync: false

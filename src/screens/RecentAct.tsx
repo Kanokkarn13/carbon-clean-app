@@ -1,6 +1,9 @@
 // src/screens/RecentAct.tsx
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert,
+  Modal, TextInput, KeyboardAvoidingView, Platform
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -11,12 +14,30 @@ import type { ActivityPayload } from '../types/activity';
 let MapView: any = null;
 try { MapView = require('react-native-maps').default; } catch {}
 
+/** ---------- Navigation Types ---------- */
 type Nav = NativeStackNavigationProp<RootStackParamList, 'RecentAct'>;
 
-const API_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+/** ---------- API BASE (ENV) ---------- */
+// .env: EXPO_PUBLIC_API_URL=https://<your-ngrok>.ngrok-free.dev   (ไม่ใส่ /api และไม่มี / ปิดท้าย)
+const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
+const API_BASE = RAW_BASE.replace(/\/+$/, '');            // ตัด '/' ท้ายโดเมน
+const api = (p: string) => `${API_BASE}/api${p}`;         // ใช้ path ที่ขึ้นต้นด้วย '/'
 
-const theme = { primary: '#10B981', primaryDark: '#059669', bg: '#F6FAF8', card: '#FFFFFF', text: '#0B1721', sub: '#6B7280', border: '#E5E7EB', chip: '#ECFDF5', chipBorder: '#D1FAE5', muted: '#F3F4F6' };
+/** ---------- Theme ---------- */
+const theme = {
+  primary: '#10B981',
+  primaryDark: '#059669',
+  bg: '#F6FAF8',
+  card: '#FFFFFF',
+  text: '#0B1721',
+  sub: '#6B7280',
+  border: '#E5E7EB',
+  chip: '#ECFDF5',
+  chipBorder: '#D1FAE5',
+  muted: '#F3F4F6',
+};
 
+/** ---------- Helpers ---------- */
 function fmtNumber(n?: number, digits = 0) { if (typeof n !== 'number' || Number.isNaN(n)) return '—'; return n.toFixed(digits); }
 function fmtDuration(sec?: number) { if (typeof sec !== 'number' || Number.isNaN(sec)) return '—'; const h = Math.floor(sec / 3600); const m = Math.floor((sec % 3600) / 60); const s = Math.floor(sec % 60); return h ? `${h}:${`${m}`.padStart(2, '0')}:${`${s}`.padStart(2, '0')}` : `${m}:${`${s}`.padStart(2, '0')}`; }
 function fmtDate(dt?: string | Date) { if (!dt) return '—'; const d = new Date(dt); if (isNaN(d.getTime())) return '—'; const date = d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }); const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); return `${date}  ·  ${time}`; }
@@ -55,13 +76,18 @@ const RecentAct: React.FC = () => {
 
   React.useEffect(() => { setEditTitle(title0); setEditDesc(description0); }, [title0, description0]);
 
-  const endpointBase = useMemo(() => `${API_BASE}/api/${typeSlug}`, [typeSlug]);
+  /** ใช้ base แบบเดียวกับไฟล์อื่น ๆ */
+  const endpointBase = useMemo(() => api(`/${typeSlug}`), [typeSlug]);
 
   const doPatch = async () => {
     if (!id) return Alert.alert('Missing id', 'This activity has no id.');
     try {
       setSaving(true);
-      const res = await fetch(`${endpointBase}/${encodeURIComponent(String(id))}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: editTitle, description: editDesc }) });
+      const res = await fetch(`${endpointBase}/${encodeURIComponent(String(id))}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editTitle, description: editDesc }),
+      });
       const text = await res.text();
       const isJson = (res.headers.get('content-type') || '').includes('application/json');
       const data = isJson ? JSON.parse(text) : { message: text };
@@ -69,32 +95,46 @@ const RecentAct: React.FC = () => {
       Alert.alert('Updated', 'Activity updated.');
       setShowEdit(false);
       navigation.goBack();
-    } catch (e: any) { Alert.alert('Update failed', e?.message || 'Unknown error'); } finally { setSaving(false); }
+    } catch (e: any) {
+      Alert.alert('Update failed', e?.message || 'Unknown error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const doDelete = async () => {
     if (!id) return Alert.alert('Missing id', 'This activity has no id.');
     Alert.alert('Delete activity', 'This action cannot be undone. Continue?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        try {
-          setDeleting(true);
-          const res = await fetch(`${endpointBase}/${encodeURIComponent(String(id))}`, { method: 'DELETE' });
-          const text = await res.text();
-          const isJson = (res.headers.get('content-type') || '').includes('application/json');
-          const data = isJson ? JSON.parse(text) : { message: text };
-          if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
-          Alert.alert('Deleted', 'Activity removed.');
-          navigation.goBack();
-        } catch (e: any) { Alert.alert('Delete failed', e?.message || 'Unknown error'); } finally { setDeleting(false); }
-      } },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            setDeleting(true);
+            const res = await fetch(`${endpointBase}/${encodeURIComponent(String(id))}`, { method: 'DELETE' });
+            const text = await res.text();
+            const isJson = (res.headers.get('content-type') || '').includes('application/json');
+            const data = isJson ? JSON.parse(text) : { message: text };
+            if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
+            Alert.alert('Deleted', 'Activity removed.');
+            navigation.goBack();
+          } catch (e: any) {
+            Alert.alert('Delete failed', e?.message || 'Unknown error');
+          } finally {
+            setDeleting(false);
+          }
+        },
+      },
     ], { cancelable: true });
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}><Ionicons name="chevron-back" size={24} color={theme.primaryDark} /></TouchableOpacity>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={24} color={theme.primaryDark} />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Summary</Text>
         <View style={{ width: 36 }} />
       </View>
@@ -102,9 +142,16 @@ const RecentAct: React.FC = () => {
       <ScrollView contentContainerStyle={{ paddingBottom: 28 }} showsVerticalScrollIndicator={false}>
         <View style={styles.mapWrap}>
           {MapView ? (
-            <MapView style={StyleSheet.absoluteFill} initialRegion={{ latitude: 13.7563, longitude: 100.5018, latitudeDelta: 0.06, longitudeDelta: 0.06 }} pointerEvents="none" />
+            <MapView
+              style={StyleSheet.absoluteFill}
+              initialRegion={{ latitude: 13.7563, longitude: 100.5018, latitudeDelta: 0.06, longitudeDelta: 0.06 }}
+              pointerEvents="none"
+            />
           ) : (
-            <View style={[StyleSheet.absoluteFill, styles.mapPlaceholder]}><Ionicons name="map" size={28} color={theme.sub} /><Text style={{ color: theme.sub, marginTop: 6 }}>Map preview</Text></View>
+            <View style={[StyleSheet.absoluteFill, styles.mapPlaceholder]}>
+              <Ionicons name="map" size={28} color={theme.sub} />
+              <Text style={{ color: theme.sub, marginTop: 6 }}>Map preview</Text>
+            </View>
           )}
           <View style={styles.mapTabs}>
             <View style={[styles.mapTab, styles.mapTabActive]}><Text style={styles.mapTabTextActive}>Map</Text></View>
@@ -119,8 +166,14 @@ const RecentAct: React.FC = () => {
               <Text style={styles.linkTitle} numberOfLines={1}>{title0 || '—'}</Text>
             </View>
             <View style={styles.actionsRight}>
-              <TouchableOpacity style={styles.iconBtn} onPress={() => setShowEdit(true)}><Ionicons name="pencil" size={16} color={theme.primaryDark} /><Text style={styles.iconBtnText}>Edit</Text></TouchableOpacity>
-              <TouchableOpacity style={[styles.iconBtn, { marginLeft: 8 }]} onPress={doDelete} disabled={deleting}><Ionicons name="trash" size={16} color="#DC2626" /><Text style={[styles.iconBtnText, { color: '#DC2626' }]}>{deleting ? 'Deleting…' : 'Delete'}</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.iconBtn} onPress={() => setShowEdit(true)}>
+                <Ionicons name="pencil" size={16} color={theme.primaryDark} />
+                <Text style={styles.iconBtnText}>Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.iconBtn, { marginLeft: 8 }]} onPress={doDelete} disabled={deleting}>
+                <Ionicons name="trash" size={16} color="#DC2626" />
+                <Text style={[styles.iconBtnText, { color: '#DC2626' }]}>{deleting ? 'Deleting…' : 'Delete'}</Text>
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -131,7 +184,9 @@ const RecentAct: React.FC = () => {
             <View style={{ flex: 1 }}><Text style={styles.dateMain}>{recordDate}</Text></View>
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={styles.pointLabel}>Point Recieved</Text>
-              <View style={styles.pointChip}><Text style={styles.pointChipText}>{typeof points === 'number' ? `${points} P` : '2000 P'}</Text></View>
+              <View style={styles.pointChip}>
+                <Text style={styles.pointChipText}>{typeof points === 'number' ? `${points} P` : '2000 P'}</Text>
+              </View>
             </View>
           </View>
         </View>
@@ -147,16 +202,28 @@ const RecentAct: React.FC = () => {
         <View style={styles.inlineStatsRow}>
           <Ionicons name="time-outline" size={16} color={theme.primaryDark} />
           <Text style={styles.inlineText}>Duration: <Text style={styles.inlineValue}>{duration}</Text></Text>
-          {steps ? (<><Ionicons name="walk-outline" size={16} color={theme.primaryDark} style={{ marginLeft: 16 }} /><Text style={styles.inlineText}>Steps: <Text style={styles.inlineValue}>{steps}</Text></Text></>) : null}
+          {steps ? (
+            <>
+              <Ionicons name="walk-outline" size={16} color={theme.primaryDark} style={{ marginLeft: 16 }} />
+              <Text style={styles.inlineText}>Steps: <Text style={styles.inlineValue}>{steps}</Text></Text>
+            </>
+          ) : null}
         </View>
 
         <View style={styles.progressWrap}>
           <Text style={styles.progressTitle}>Your Current Progress</Text>
           <View style={styles.progressHeader}>
-            <View style={styles.progressRing}><Ionicons name="checkmark" size={18} color={theme.primaryDark} /></View>
-            <Text style={styles.progressPctText}>{Math.round(progressPct * 100)}%<Text style={styles.progressSub}> from your goal</Text></Text>
+            <View style={styles.progressRing}>
+              <Ionicons name="checkmark" size={18} color={theme.primaryDark} />
+            </View>
+            <Text style={styles.progressPctText}>
+              {Math.round(progressPct * 100)}%
+              <Text style={styles.progressSub}> from your goal</Text>
+            </Text>
           </View>
-          <View style={styles.progressBarTrack}><View style={[styles.progressBarFill, { width: `${Math.round(progressPct * 100)}%` }]} /></View>
+          <View style={styles.progressBarTrack}>
+            <View style={[styles.progressBarFill, { width: `${Math.round(progressPct * 100)}%` }]} />
+          </View>
         </View>
 
         <View style={{ height: 8 }} />
@@ -168,18 +235,42 @@ const RecentAct: React.FC = () => {
             <View style={styles.modalCard}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Edit Activity</Text>
-                <TouchableOpacity onPress={() => setShowEdit(false)}><Ionicons name="close" size={22} color={theme.sub} /></TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowEdit(false)}>
+                  <Ionicons name="close" size={22} color={theme.sub} />
+                </TouchableOpacity>
               </View>
 
               <Text style={styles.inputLabel}>Title</Text>
-              <TextInput style={styles.input} value={editTitle} onChangeText={setEditTitle} placeholder="Title" placeholderTextColor={theme.sub} />
+              <TextInput
+                style={styles.input}
+                value={editTitle}
+                onChangeText={setEditTitle}
+                placeholder="Title"
+                placeholderTextColor={theme.sub}
+              />
 
               <Text style={[styles.inputLabel, { marginTop: 10 }]}>Description</Text>
-              <TextInput style={[styles.input, { height: 96, textAlignVertical: 'top' }]} value={editDesc} onChangeText={setEditDesc} placeholder="Description" placeholderTextColor={theme.sub} multiline />
+              <TextInput
+                style={[styles.input, { height: 96, textAlignVertical: 'top' }]}
+                value={editDesc}
+                onChangeText={setEditDesc}
+                placeholder="Description"
+                placeholderTextColor={theme.sub}
+                multiline
+              />
 
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[styles.modalBtn, styles.modalBtnGhost]} onPress={() => setShowEdit(false)}><Text style={styles.modalBtnGhostText}>Cancel</Text></TouchableOpacity>
-                <TouchableOpacity style={[styles.modalBtn, styles.modalBtnPrimary, saving && { opacity: 0.6 }]} onPress={doPatch} disabled={saving}><Ionicons name="save-outline" size={18} color="#FFF" /><Text style={styles.modalBtnPrimaryText}>{saving ? 'Saving…' : 'Save'}</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.modalBtn, styles.modalBtnGhost]} onPress={() => setShowEdit(false)}>
+                  <Text style={styles.modalBtnGhostText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalBtnPrimary, saving && { opacity: 0.6 }]}
+                  onPress={doPatch}
+                  disabled={saving}
+                >
+                  <Ionicons name="save-outline" size={18} color="#FFF" />
+                  <Text style={styles.modalBtnPrimaryText}>{saving ? 'Saving…' : 'Save'}</Text>
+                </TouchableOpacity>
               </View>
             </View>
           </KeyboardAvoidingView>
@@ -195,6 +286,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 6, paddingBottom: 10, backgroundColor: theme.bg },
   backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.chip, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.chipBorder },
   headerTitle: { flex: 1, textAlign: 'center', fontWeight: '800', fontSize: 18, color: theme.text, marginRight: 36 },
+
   mapWrap: { height: 220, marginHorizontal: 16, marginBottom: 12, borderRadius: RADIUS, overflow: 'hidden', backgroundColor: theme.muted, borderWidth: 1, borderColor: theme.border },
   mapPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   mapTabs: { position: 'absolute', top: 10, left: 10, flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.9)', padding: 3, borderRadius: 10 },

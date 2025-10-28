@@ -3,43 +3,40 @@ import { Platform } from 'react-native';
 
 /** Let TS know we may set a custom flag on global. */
 declare global {
-  // e.g. somewhere you can do: global.useRealDevice = true
-  // to force LAN base even in Android emulator during dev.
-  // eslint-disable-next-line no-var
   var useRealDevice: boolean | undefined;
 }
 
+/** Format seconds -> mm:ss */
 export function formatTime(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
+/** Resolve base URL safely from ENV or fallback */
 function resolveBase(): string {
-  // ⚙️ CHANGE THIS to your machine's LAN IP when testing on real device
-  const LAN = 'http://192.168.0.102:3000';
-
-  // Use Android emulator loopback unless user explicitly forces real device
+  const env = process.env.EXPO_PUBLIC_API_URL?.trim();
   const forceRealDevice = (globalThis as any).useRealDevice === true;
 
-  if (__DEV__ && Platform.OS === 'android' && !forceRealDevice) {
-    return 'http://10.0.2.2:3000';
+  // ตัด / ท้ายออกถ้ามี
+  if (env && env.length > 0) return env.replace(/\/+$/, '');
+
+  // ⚙️ fallback สำหรับ dev
+  if (__DEV__) {
+    if (Platform.OS === 'android' && !forceRealDevice) return 'http://10.0.2.2:3000';
+    return 'http://192.168.0.102:3000'; // ✅ ปรับเป็น IP LAN ของเครื่องคุณ
   }
-  return LAN;
+  return 'https://your-prod-domain.com';
 }
 
-export function buildSaveEndpoint(
-  goalType: 'walking' | 'cycling',
-  base = resolveBase()
-) {
-  const url =
-    goalType === 'walking'
-      ? `${base}/api/save-walking`
-      : `${base}/api/save-cycling`;
+/** ✅ Reusable function to build save endpoints */
+export function buildSaveEndpoint(goalType: 'walking' | 'cycling', base = resolveBase()) {
+  const url = `${base}/api/${goalType === 'walking' ? 'save-walking' : 'save-cycling'}`;
   console.log('[buildSaveEndpoint]', { goalType, url });
   return url;
 }
 
+/** ✅ Save activity data */
 export async function saveActivity(payload: any, saveEndpoint: string) {
   try {
     console.log('📡 saveActivity ->', { saveEndpoint, payload });
@@ -61,7 +58,7 @@ export async function saveActivity(payload: any, saveEndpoint: string) {
   }
 }
 
-/** Optional: used by CarbonOffsetScreen for post-insert PATCH */
+/** ✅ Patch carbon reduce for walking/cycling */
 export async function patchCarbonReduce(
   goalType: 'walking' | 'cycling',
   id: number,

@@ -37,8 +37,14 @@ type RootStackParamList = {
 };
 
 // ---- API origin (อย่าใส่ /api ใน ENV) ----
-const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:3000';
+const RAW_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:3000';
+const API_ORIGIN = RAW_ORIGIN.replace(/\/+$/, '');             // ตัด / ท้าย
 const api = (path: string) => `${API_ORIGIN}/api${path}`;
+
+if (__DEV__) {
+  // eslint-disable-next-line no-console
+  console.log('[API_ORIGIN]', API_ORIGIN);
+}
 
 const theme = {
   green: '#10B981',
@@ -166,6 +172,7 @@ export default function EmissionCalculate() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      keepalive: true,
     });
     const text = await res.text();
     if (!res.ok) {

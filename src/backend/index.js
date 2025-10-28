@@ -24,7 +24,11 @@ const {
 const app = express();
 
 /* -------------------- Middleware -------------------- */
-app.use(cors());
+app.use(
+  cors({
+    origin: '*', // ✅ เปิดให้เรียกจาก Expo / Web ได้หมด (แก้ทีหลังตอน production)
+  })
+);
 app.use(bodyParser.json({ limit: '1mb' }));
 app.use((req, _res, next) => {
   console.log(`📥 ${req.method} ${req.url}`);
@@ -35,7 +39,7 @@ app.use((req, _res, next) => {
 (async () => {
   try {
     await db.query('SELECT 1'); // simple ping
-    console.log('✅ Connected to DB');
+    console.log('✅ Successfully connected to the database!');
   } catch (err) {
     console.error('❌ Failed to connect to DB:', err);
   }
@@ -65,12 +69,9 @@ app.post('/api/emission', saveTransportEmission);
 app.get('/api/saved/:user_id', listSavedActivities);
 
 /* -------------------- Reduction Save/List (rc_point) -------------------- */
-// POST body: { user_id, point_value, distance_km, activity_from, param_from, activity_to, param_to }
 app.post('/api/reduction', saveReduction);
-
-// ✅ Support BOTH paths for listing reductions
 app.get('/api/reduction/:user_id', listReductions);        // legacy
-app.get('/api/reduction/saved/:user_id', listReductions);  // new (your app was calling this)
+app.get('/api/reduction/saved/:user_id', listReductions);  // new (your app uses this)
 
 /* -------------------- Recent Activity (walking/cycling history) -------------------- */
 app.use('/api', activityRoutes);
@@ -79,10 +80,9 @@ app.use('/api', activityRoutes);
 app.get('/api/health', async (_req, res) => {
   try {
     const out = await db.query('SELECT NOW() AS now');
-    // handle mysql2 return shapes safely
     const rows = Array.isArray(out) ? out[0] : out;
     const now =
-      Array.isArray(rows) && rows.length && (rows[0].now || rows[0].NOW)
+      Array.isArray(rows) && rows.length
         ? rows[0].now || rows[0].NOW
         : null;
 
@@ -100,8 +100,10 @@ app.use((req, res) => {
 });
 
 /* -------------------- Start Server -------------------- */
+// ✅ ✅ IMPORTANT: for Render (or any cloud hosting)
 const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
+const HOST = '0.0.0.0'; // ✅ ต้องใช้ 0.0.0.0 เพื่อให้ Render ฟัง request ภายนอกได้
+
 app.listen(PORT, HOST, () => {
-  console.log(`🚀 Server running at http://${HOST}:${PORT}`);
+  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
 });

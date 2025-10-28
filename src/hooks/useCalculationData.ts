@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { User, SavedRow, ReductionRow } from '../types/calc';
 
-const API_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:3000';
+/** ===== API base from ENV (Expo) ===== */
+const RAW_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:3000';
+const API_ORIGIN = RAW_ORIGIN.replace(/\/+$/, ''); // ตัด / ท้ายโดเมนออก
 const api = (path: string) => `${API_ORIGIN}/api${path}`;
+
+// (แนะนำ) ดูค่า base URL ตอน dev
+if (__DEV__) {
+  // eslint-disable-next-line no-console
+  console.log('[API_ORIGIN]', API_ORIGIN);
+}
 
 function parsePositiveInt(v: unknown): number | undefined {
   const n = Number(v);
@@ -58,7 +66,7 @@ export function useCalculationData(userParam?: Partial<User>, params?: any) {
     setSavingError(null);
     setLoading(true);
     try {
-      const res = await fetch(api(`/saved/${userId}`));
+      const res = await fetch(api(`/saved/${userId}`), { keepalive: true });
       const text = await res.text();
       if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
       const json = text ? JSON.parse(text) : { items: [] };
@@ -86,7 +94,7 @@ export function useCalculationData(userParam?: Partial<User>, params?: any) {
     setLoadingReduce(true);
     try {
       const url = api(`/reduction/saved/${userId}`);
-      const res = await fetch(url);
+      const res = await fetch(url, { keepalive: true });
       const text = await res.text();
       if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
       const json = text ? JSON.parse(text) : { items: [] };
