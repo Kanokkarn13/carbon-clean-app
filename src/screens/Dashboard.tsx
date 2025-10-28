@@ -19,7 +19,8 @@ import { baseLineChartConfig } from '../utils/chartConfig';
 import { useDashboardSeries, Period } from '../hooks/useDashboardSeries';
 import { fetchRecentActivities } from '../services/activityService';
 import { fetchEmissionItems, fetchReductionItems } from '../services/totalsService';
-import { safeDate } from '../utils/date';
+// ❌ ลบ safeDate ออก เพื่อกันการบวก +7 อัตโนมัติ
+// import { safeDate } from '../utils/date';
 import ProgressStat from '../components/ProgressStat';
 import SegmentedControl from '../components/SegmentedControl';
 import NavPeriodButtons from '../components/NavPeriodButtons';
@@ -29,10 +30,42 @@ const SCREEN_PAD = 16;
 const CARD_HPAD = 14;
 const INNER_WIDTH = screenWidth - SCREEN_PAD * 2 - CARD_HPAD * 2;
 
-/* ---------- helpers ---------- */
+/* ---------- date helpers (ไม่บวก +7) ---------- */
 const isValidDate = (d: any) => d instanceof Date && !Number.isNaN(d.getTime());
 const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
 const endOfDay   = (d: Date) => { const x = new Date(d); x.setHours(23,59,59,999); return x; };
+
+/**
+ * parseLocalBkk:
+ * - ถ้าสตริงลงท้าย 'Z' (UTC) แต่ค่าจริงใน DB เป็นเวลาท้องถิ่น → ตัด Z ออกก่อน parse
+ * - ถ้าสตริงไม่มีโซน → parse ตรง ๆ (ไม่เติม Z)
+ * - ถ้าเป็น epoch sec/ms → แปลงตามปกติ
+ */
+function parseLocalBkk(input: any): Date | undefined {
+  if (!input) return undefined;
+  if (input instanceof Date) return input;
+
+  if (typeof input === 'number') {
+    // epoch sec (10 หลัก) | ms (13 หลัก)
+    return new Date(input < 1e11 ? input * 1000 : input);
+  }
+
+  if (typeof input === 'string') {
+    let s = input.trim();
+
+    // ลงท้าย Z ให้ตัดออก -> new Date() จะตีความเป็น local time (Asia/Bangkok บนเครื่อง)
+    if (/[zZ]$/.test(s)) s = s.replace(/[zZ]$/, '');
+
+    // "YYYY-MM-DD HH:mm(:ss)" → เสถียรขึ้นด้วย T แต่ไม่เติมโซน
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) s = s.replace(' ', 'T');
+
+    // อย่าเติม Z เพิ่ม เด็ดขาด
+    return new Date(s);
+  }
+  return undefined;
+}
+
+/* ---------- misc helpers ---------- */
 const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const pctText = (v: number) => `${num(v).toFixed(2)}%`;
 
@@ -77,13 +110,15 @@ export default function Dashboard() {
       try {
         const raw = await fetchRecentActivities(user.user_id);
         const normalized = raw.map((a: any) => {
-          const d = safeDate(a.record_date ?? a.created_at);
+          const d = parseLocalBkk(a.record_date ?? a.created_at); // ✅ ไม่บวก +7
           return {
             ...a,
-            record_date: d ? d.toISOString() : null,
+            // เก็บ record_date เป็นสตริงดิบไว้ หรือให้เป็น Date local ก็ได้
+            // ที่นี่จะเก็บเป็น Date เพื่อใช้ต่อใน hook อื่น ๆ
+            record_date: d ?? null,
             distance_km: Number(a.distance_km) || 0,
             type: a.type || 'Activity',
-            title: a.title || `${a.type || 'Activity'} on ${d ? d.toISOString().slice(0, 10) : 'Unknown'}`,
+            title: a.title || `${a.type || 'Activity'} on ${d ? d.toLocaleDateString('en-CA') : 'Unknown'}`,
           };
         });
         setActivities(normalized);
@@ -130,7 +165,7 @@ export default function Dashboard() {
 
   const { emissionSum, reductionSum, totalPie, emPct, redPct } = useMemo(() => {
     const inRange = (v: any) => {
-      const d = safeDate(v);
+      const d = parseLocalBkk(v); // ✅ ไม่บวก +7
       return d && isValidDate(d) && d >= start && d <= end;
     };
 
@@ -274,18 +309,18 @@ export default function Dashboard() {
             ) : (
               <View style={styles.cardChartWrap}>
                 <PieChart
-                  key={pieKey}             
+                  key={pieKey}
                   data={[
                     {
                       name: 'Emission',
-                      population: Math.max(EPS, pieEmission),
+                      population: Math.max(0.0001, pieEmission),
                       color: 'rgba(239, 68, 68, 0.85)',
                       legendFontColor: '#EF4444',
                       legendFontSize: 14,
                     },
                     {
                       name: 'Reduction',
-                      population: Math.max(EPS, pieReduction),
+                      population: Math.max(0.0001, pieReduction),
                       color: 'rgba(16, 185, 129, 0.9)',
                       legendFontColor: '#10B981',
                       legendFontSize: 14,

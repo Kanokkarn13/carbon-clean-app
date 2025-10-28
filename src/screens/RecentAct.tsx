@@ -2,7 +2,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert,
-  Modal, TextInput, KeyboardAvoidingView, Platform
+  Modal, TextInput, KeyboardAvoidingView, Platform, Dimensions
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,16 +14,12 @@ import type { ActivityPayload } from '../types/activity';
 let MapView: any = null;
 try { MapView = require('react-native-maps').default; } catch {}
 
-/** ---------- Navigation Types ---------- */
 type Nav = NativeStackNavigationProp<RootStackParamList, 'RecentAct'>;
 
-/** ---------- API BASE (ENV) ---------- */
-// .env: EXPO_PUBLIC_API_URL=https://<your-ngrok>.ngrok-free.dev   (ไม่ใส่ /api และไม่มี / ปิดท้าย)
 const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
-const API_BASE = RAW_BASE.replace(/\/+$/, '');            // ตัด '/' ท้ายโดเมน
-const api = (p: string) => `${API_BASE}/api${p}`;         // ใช้ path ที่ขึ้นต้นด้วย '/'
+const API_BASE = RAW_BASE.replace(/\/+$/, '');
+const api = (p: string) => `${API_BASE}/api${p}`;
 
-/** ---------- Theme ---------- */
 const theme = {
   primary: '#10B981',
   primaryDark: '#059669',
@@ -32,15 +28,73 @@ const theme = {
   text: '#0B1721',
   sub: '#6B7280',
   border: '#E5E7EB',
-  chip: '#ECFDF5',
-  chipBorder: '#D1FAE5',
+  chip: '#F8FAFC',
+  chipBorder: '#E8EEF3',
   muted: '#F3F4F6',
 };
 
-/** ---------- Helpers ---------- */
-function fmtNumber(n?: number, digits = 0) { if (typeof n !== 'number' || Number.isNaN(n)) return '—'; return n.toFixed(digits); }
-function fmtDuration(sec?: number) { if (typeof sec !== 'number' || Number.isNaN(sec)) return '—'; const h = Math.floor(sec / 3600); const m = Math.floor((sec % 3600) / 60); const s = Math.floor(sec % 60); return h ? `${h}:${`${m}`.padStart(2, '0')}:${`${s}`.padStart(2, '0')}` : `${m}:${`${s}`.padStart(2, '0')}`; }
-function fmtDate(dt?: string | Date) { if (!dt) return '—'; const d = new Date(dt); if (isNaN(d.getTime())) return '—'; const date = d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }); const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); return `${date}  ·  ${time}`; }
+// === brand colors for icons/values ===
+const COLORS = {
+  green: '#22C55E',  // carbon
+  blue:  '#3B82F6',  // distance
+  teal:  '#14B8A6',  // duration
+  yellow:'#F59E0B',  // steps
+};
+const TINTS = {
+  green: '#ECFDF5',
+  blue:  '#EFF6FF',
+  teal:  '#ECFEFF',
+  yellow:'#FFFBEB',
+};
+
+function fmtNumber(n?: number, digits = 0) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return '—';
+  return n.toFixed(digits);
+}
+function fmtDuration(sec?: number) {
+  if (typeof sec !== 'number' || Number.isNaN(sec)) return '—';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return h ? `${h}:${`${m}`.padStart(2,'0')}:${`${s}`.padStart(2,'0')}` : `${m}:${`${s}`.padStart(2,'0')}`;
+}
+
+/** ---------- DATE SAFE HELPERS (no UTC shift, force Gregorian) ---------- */
+const parseLocalLike = (input?: string | number | Date) => {
+  if (!input) return undefined as Date | undefined;
+  if (input instanceof Date) return input;
+
+  if (typeof input === 'number') {
+    // 10-digit seconds vs 13-digit ms
+    return new Date(input < 1e11 ? input * 1000 : input);
+  }
+
+  let s = String(input).trim();
+  // Strip trailing Z (UTC), we want to treat as local wall time
+  if (/[zZ]$/.test(s)) s = s.slice(0, -1);
+  // Normalize "YYYY-MM-DD HH:mm(:ss)" → "YYYY-MM-DDTHH:mm(:ss)"
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) {
+    s = s.replace(' ', 'T');
+  }
+  return new Date(s);
+};
+
+function fmtDateParts(dt?: string | number | Date) {
+  const d = parseLocalLike(dt);
+  if (!d || isNaN(d.getTime())) return { date: '—', time: '' };
+
+  const dd = String(d.getDate()).padStart(2, '0');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mon = months[d.getMonth()];
+  const yyyy = d.getFullYear(); // Gregorian (no BE)
+
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+
+  return { date: `${dd} ${mon} ${yyyy}`, time: `${hh}:${mm}` };
+}
+/** ---------------------------------------------------------------------- */
+
 function toNum(v: unknown): number | undefined { const n = Number(v); return Number.isFinite(n) ? n : undefined; }
 
 const RecentAct: React.FC = () => {
@@ -50,14 +104,17 @@ const RecentAct: React.FC = () => {
   const activity: ActivityPayload | undefined = params.activity as any;
 
   const typeLabel = (activity as any)?.type || 'Activity';
-  const typeSlug = String(typeLabel).toLowerCase().includes('cycl') ? 'cycling' : 'walking';
+  const isCycling = String(typeLabel).toLowerCase().includes('cycl');
+  const typeSlug = isCycling ? 'cycling' : 'walking';
+
   const id = (activity as any)?.id;
   const title0 = activity?.title || (activity as any)?.type || 'Title';
   const description0 = activity?.description || '';
+
   const distanceKm = typeof activity?.distance_km === 'number' ? activity.distance_km : toNum((activity as any)?.distance_km);
   const steps = typeof activity?.step_total === 'number' ? activity.step_total.toLocaleString() : toNum((activity as any)?.step_total)?.toLocaleString();
   const duration = fmtDuration(typeof activity?.duration_sec === 'number' ? activity.duration_sec : toNum((activity as any)?.duration_sec));
-  const recordDate = fmtDate((activity as any)?.record_date ?? (activity as any)?.created_at);
+  const { date: recordDate, time: recordTime } = fmtDateParts((activity as any)?.record_date ?? (activity as any)?.created_at);
 
   const carbonReduceKgTop = toNum(params.carbonReduce);
   const carbonReduceKgAct = toNum((activity as any)?.carbonReduce) ?? toNum((activity as any)?.carbon_reduce_kg);
@@ -66,7 +123,6 @@ const RecentAct: React.FC = () => {
   const carbonG = carbonKg != null ? Math.round(carbonKg * 1000) : carbonReduceGAct;
 
   const points = typeof (activity as any)?.points === 'number' ? (activity as any).points : undefined;
-  const progressPct = typeof (activity as any)?.progress_pct === 'number' && !Number.isNaN((activity as any).progress_pct) ? Math.max(0, Math.min(1, (activity as any).progress_pct)) : 0.3;
 
   const [showEdit, setShowEdit] = useState(false);
   const [editTitle, setEditTitle] = useState(title0);
@@ -76,7 +132,6 @@ const RecentAct: React.FC = () => {
 
   React.useEffect(() => { setEditTitle(title0); setEditDesc(description0); }, [title0, description0]);
 
-  /** ใช้ base แบบเดียวกับไฟล์อื่น ๆ */
   const endpointBase = useMemo(() => api(`/${typeSlug}`), [typeSlug]);
 
   const doPatch = async () => {
@@ -129,8 +184,17 @@ const RecentAct: React.FC = () => {
     ], { cancelable: true });
   };
 
+  // ======= SQUARE ROW SIZE (all boxes same row) =======
+  const screenW = Dimensions.get('window').width;
+  const PAD_H = 16;       // horizontal padding of grid
+  const GAP = 10;         // gap between squares
+  const COUNT = isCycling ? 3 : 4;
+  const innerW = screenW - PAD_H * 2 - GAP * (COUNT - 1);
+  const BOX = Math.max(64, Math.floor(innerW / COUNT)); // min 64px
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={theme.primaryDark} />
@@ -139,7 +203,8 @@ const RecentAct: React.FC = () => {
         <View style={{ width: 36 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 28 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 96 }} showsVerticalScrollIndicator={false}>
+        {/* Map */}
         <View style={styles.mapWrap}>
           {MapView ? (
             <MapView
@@ -159,31 +224,27 @@ const RecentAct: React.FC = () => {
           </View>
         </View>
 
+        {/* Main card */}
         <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.labelBold}>Title:</Text>
-              <Text style={styles.linkTitle} numberOfLines={1}>{title0 || '—'}</Text>
-            </View>
-            <View style={styles.actionsRight}>
-              <TouchableOpacity style={styles.iconBtn} onPress={() => setShowEdit(true)}>
-                <Ionicons name="pencil" size={16} color={theme.primaryDark} />
-                <Text style={styles.iconBtnText}>Edit</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.iconBtn, { marginLeft: 8 }]} onPress={doDelete} disabled={deleting}>
-                <Ionicons name="trash" size={16} color="#DC2626" />
-                <Text style={[styles.iconBtnText, { color: '#DC2626' }]}>{deleting ? 'Deleting…' : 'Delete'}</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.titleLine}>
+            <Text style={styles.labelBold}>Title:</Text>
+            <Text style={styles.linkTitle} numberOfLines={2}>{title0 || '—'}</Text>
           </View>
 
           <Text style={[styles.label, { marginTop: 12 }]}>Description</Text>
-          <View style={styles.descBox}><Text style={styles.descText}>{description0 || ' '}</Text></View>
+          <View style={styles.descBox}>
+            <Text style={styles.descText}>{description0 || ' '}</Text>
+          </View>
 
-          <View style={[styles.rowBetween, { marginTop: 12 }]}>
-            <View style={{ flex: 1 }}><Text style={styles.dateMain}>{recordDate}</Text></View>
+          {/* date/time + points */}
+          <View style={styles.dateRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.dateMain}>{recordDate}</Text>
+              {recordTime ? <Text style={styles.timeSub}>{recordTime}</Text> : null}
+            </View>
+
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={styles.pointLabel}>Point Recieved</Text>
+              <Text style={styles.pointLabel}>Point Received</Text>
               <View style={styles.pointChip}>
                 <Text style={styles.pointChipText}>{typeof points === 'number' ? `${points} P` : '2000 P'}</Text>
               </View>
@@ -191,44 +252,48 @@ const RecentAct: React.FC = () => {
           </View>
         </View>
 
-        {/* Inline rows */}
-        <View style={styles.inlineStatsRow}>
-          <Ionicons name="leaf" size={16} color={theme.primaryDark} />
-          <Text style={styles.inlineText}>Carbon Reduce: <Text style={styles.inlineValue}>{fmtNumber(carbonG, 0)} g</Text></Text>
-          <Ionicons name="location" size={16} color={theme.primaryDark} style={{ marginLeft: 16 }} />
-          <Text style={styles.inlineText}>Distance: <Text style={styles.inlineValue}>{fmtNumber(distanceKm, 2)} km</Text></Text>
-        </View>
-
-        <View style={styles.inlineStatsRow}>
-          <Ionicons name="time-outline" size={16} color={theme.primaryDark} />
-          <Text style={styles.inlineText}>Duration: <Text style={styles.inlineValue}>{duration}</Text></Text>
-          {steps ? (
-            <>
-              <Ionicons name="walk-outline" size={16} color={theme.primaryDark} style={{ marginLeft: 16 }} />
-              <Text style={styles.inlineText}>Steps: <Text style={styles.inlineValue}>{steps}</Text></Text>
-            </>
-          ) : null}
-        </View>
-
-        <View style={styles.progressWrap}>
-          <Text style={styles.progressTitle}>Your Current Progress</Text>
-          <View style={styles.progressHeader}>
-            <View style={styles.progressRing}>
-              <Ionicons name="checkmark" size={18} color={theme.primaryDark} />
-            </View>
-            <Text style={styles.progressPctText}>
-              {Math.round(progressPct * 100)}%
-              <Text style={styles.progressSub}> from your goal</Text>
-            </Text>
-          </View>
-          <View style={styles.progressBarTrack}>
-            <View style={[styles.progressBarFill, { width: `${Math.round(progressPct * 100)}%` }]} />
-          </View>
+        {/* Squares — all in one row (with colored icons & values) */}
+        <View style={[styles.squareRow, { paddingHorizontal: PAD_H }]}>
+          <StatSquare
+            size={BOX} icon="leaf" label="carbon reduce"
+            value={`${fmtNumber(carbonG, 0)} g`} color={COLORS.green} tint={TINTS.green}
+          />
+          <StatSquare
+            size={BOX} icon="location" label="distance"
+            value={`${fmtNumber(distanceKm, 2)} km`} color={COLORS.blue} tint={TINTS.blue}
+          />
+          <StatSquare
+            size={BOX} icon="time-outline" label="duration"
+            value={duration} color={COLORS.teal} tint={TINTS.teal}
+          />
+          {!isCycling && (
+            <StatSquare
+              size={BOX} icon="walk-outline" label="steps"
+              value={steps ?? '—'} color={COLORS.yellow} tint={TINTS.yellow}
+            />
+          )}
         </View>
 
         <View style={{ height: 8 }} />
       </ScrollView>
 
+      {/* Bottom actions */}
+      <View style={styles.actionBar}>
+        <TouchableOpacity style={[styles.actionBtn, styles.actionGhost]} onPress={() => setShowEdit(true)}>
+          <Ionicons name="pencil" size={16} color={theme.primaryDark} />
+          <Text style={[styles.actionText, { color: theme.primaryDark }]}>Edit</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.actionBtn, styles.actionDanger, deleting && { opacity: 0.6 }]}
+          onPress={doDelete}
+          disabled={deleting}
+        >
+          <Ionicons name="trash" size={16} color="#fff" />
+          <Text style={[styles.actionText, { color: '#fff' }]}>{deleting ? 'Deleting…' : 'Delete'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Edit modal */}
       <Modal visible={showEdit} transparent animationType="slide" onRequestClose={() => setShowEdit(false)}>
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
@@ -280,66 +345,98 @@ const RecentAct: React.FC = () => {
   );
 };
 
-const RADIUS = 16;
+function StatSquare({
+  size, icon, label, value, color, tint,
+}: {
+  size: number;
+  icon: any;
+  label: string;
+  value: string;
+  color: string;
+  tint: string;
+}) {
+  return (
+    <View style={[styles.square, { width: size, height: size }]}>
+      <View style={[styles.squareIconWrap, { backgroundColor: tint }]}>
+        <Ionicons name={icon} size={18} color={color} />
+      </View>
+      <Text style={[styles.squareValue, { color }]} numberOfLines={1}>{value}</Text>
+      <Text style={styles.squareLabel} numberOfLines={1}>{label}</Text>
+    </View>
+  );
+}
+
+const RADIUS = 10;
 
 const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 6, paddingBottom: 10, backgroundColor: theme.bg },
-  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.chip, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.chipBorder },
+  backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.border },
   headerTitle: { flex: 1, textAlign: 'center', fontWeight: '800', fontSize: 18, color: theme.text, marginRight: 36 },
 
-  mapWrap: { height: 220, marginHorizontal: 16, marginBottom: 12, borderRadius: RADIUS, overflow: 'hidden', backgroundColor: theme.muted, borderWidth: 1, borderColor: theme.border },
+  mapWrap: { height: 210, marginHorizontal: 16, marginBottom: 12, borderRadius: RADIUS, overflow: 'hidden', backgroundColor: theme.muted, borderWidth: 1, borderColor: theme.border },
   mapPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-  mapTabs: { position: 'absolute', top: 10, left: 10, flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.9)', padding: 3, borderRadius: 10 },
-  mapTab: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 8 },
+  mapTabs: { position: 'absolute', top: 10, left: 10, flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.95)', padding: 3, borderRadius: 8 },
+  mapTab: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 6 },
   mapTabActive: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border },
   mapTabText: { color: theme.sub, fontSize: 12, fontWeight: '600' },
   mapTabTextActive: { color: theme.text, fontSize: 12, fontWeight: '700' },
 
-  card: { marginHorizontal: 16, backgroundColor: theme.card, borderRadius: RADIUS, padding: 16, borderWidth: 1, borderColor: theme.border },
+  card: { marginHorizontal: 16, backgroundColor: theme.card, borderRadius: RADIUS, padding: 14, borderWidth: 1, borderColor: theme.border },
 
-  cardHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
-  actionsRight: { flexDirection: 'row', alignItems: 'center' },
-  iconBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFF', borderWidth: 1, borderColor: theme.border, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 },
-  iconBtnText: { color: theme.primaryDark, fontWeight: '700' },
-
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, flex: 1 },
-
+  titleLine: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   labelBold: { color: theme.text, fontWeight: '800', fontSize: 16 },
-  linkTitle: { color: theme.primaryDark, fontWeight: '800', fontSize: 16 },
+  linkTitle: { color: theme.primaryDark, fontWeight: '800', fontSize: 16, flex: 1, flexShrink: 1 },
 
   label: { color: theme.sub, fontSize: 12, fontWeight: '700' },
-  descBox: { marginTop: 6, minHeight: 64, backgroundColor: '#F1F5F9', borderRadius: 12, borderWidth: 1, borderColor: theme.border, padding: 12 },
-  descText: { color: theme.sub, fontSize: 14 },
+  descBox: { marginTop: 6, minHeight: 64, backgroundColor: theme.chip, borderRadius: 10, borderWidth: 1, borderColor: theme.chipBorder, padding: 12 },
+  descText: { color: theme.text, fontSize: 14 },
 
-  dateMain: { color: theme.text, fontSize: 14, fontWeight: '700' },
+  dateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
+  dateMain: { color: theme.text, fontSize: 15, fontWeight: '700' },
+  timeSub: { color: theme.sub, fontSize: 12, marginTop: 2 },
 
-  pointLabel: { color: theme.primaryDark, fontSize: 12, fontWeight: '700', marginBottom: 6 },
-  pointChip: { backgroundColor: theme.chip, borderWidth: 1, borderColor: theme.chipBorder, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20 },
+  pointLabel: { color: theme.primaryDark, fontSize: 12, fontWeight: '700', marginBottom: 6, alignSelf: 'flex-end' },
+  pointChip: { backgroundColor: '#F1FFF6', borderWidth: 1, borderColor: '#DDF7E7', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, alignSelf: 'flex-end' },
   pointChipText: { color: theme.text, fontWeight: '800' },
 
-  smallMuted: { color: theme.sub, fontSize: 11, marginTop: 8 },
-  durationText: { color: theme.text, fontWeight: '700', marginTop: 2 },
+  /** one-row squares */
+  squareRow: { marginTop: 12, flexDirection: 'row', gap: 10 },
+  square: {
+    backgroundColor: theme.card,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: RADIUS,
+    padding: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  squareIconWrap: {
+    width: 28, height: 28, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 6,
+  },
+  squareValue: { fontSize: 14, fontWeight: '800' },
+  squareLabel: { fontSize: 11, fontWeight: '600', color: theme.sub, marginTop: 1, textTransform: 'none' },
 
-  inlineStatsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', flexWrap: 'wrap', paddingHorizontal: 20, marginTop: 10, gap: 4 },
-  inlineText: { color: theme.text, fontSize: 14, marginLeft: 4 },
-  inlineValue: { color: theme.primaryDark, fontWeight: '700' },
+  /** bottom actions */
+  actionBar: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16,
+    backgroundColor: theme.bg, borderTopWidth: 1, borderTopColor: theme.border,
+    flexDirection: 'row', gap: 10,
+  },
+  actionBtn: { flex: 1, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
+  actionGhost: { backgroundColor: theme.card, borderWidth: 1, borderColor: theme.border },
+  actionDanger: { backgroundColor: '#DC2626' },
+  actionText: { fontWeight: '800', fontSize: 14 },
 
-  progressWrap: { marginTop: 16, marginHorizontal: 16, backgroundColor: theme.card, borderRadius: RADIUS, padding: 16, borderWidth: 1, borderColor: theme.border },
-  progressTitle: { fontWeight: '800', fontSize: 16, color: theme.text, marginBottom: 12, textAlign: 'center' },
-  progressHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-  progressRing: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: theme.chipBorder, backgroundColor: theme.chip, alignItems: 'center', justifyContent: 'center' },
-  progressPctText: { fontSize: 18, fontWeight: '800', color: theme.text },
-  progressSub: { fontSize: 14, fontWeight: '600', color: theme.sub },
-  progressBarTrack: { height: 8, borderRadius: 6, backgroundColor: '#E5E7EB', overflow: 'hidden' },
-  progressBarFill: { height: 8, borderRadius: 6, backgroundColor: theme.primary },
-
+  /** modal */
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', padding: 16, justifyContent: 'flex-end' },
   modalCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: theme.border },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   modalTitle: { fontSize: 18, fontWeight: '800', color: theme.text },
   inputLabel: { marginTop: 12, color: theme.sub, fontWeight: '700', fontSize: 12 },
   input: { borderWidth: 1, borderColor: theme.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: theme.text, marginTop: 6 },
-
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
   modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
   modalBtnGhost: { backgroundColor: '#FFF', borderWidth: 1, borderColor: theme.border },

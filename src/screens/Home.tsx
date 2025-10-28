@@ -16,7 +16,8 @@ import { useIsFocused, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList, User as StackUser } from './HomeStack';
 
-// ---------- Types ----------
+import RecentActivityList from '../components/RecentActivityList';
+
 type HomeNav = NativeStackNavigationProp<RootStackParamList, any>;
 
 type HomeUser = StackUser & {
@@ -38,17 +39,16 @@ export type Activity = {
   record_date?: string | Date | number;
   id?: string | number;
 
-  carbonReduce?: number;       // kg
-  carbon_reduce_kg?: number;   // kg (alternate naming)
-  carbon_reduce_g?: number;    // g  (derived if only kg exists)
+  carbonReduce?: number;
+  carbon_reduce_kg?: number;
+  carbon_reduce_g?: number;
 };
 
 type Props = { navigation: HomeNav; user?: HomeUser };
 
 // ===== API base from ENV (Expo) =====
-// .env: EXPO_PUBLIC_API_URL=https://<your-ngrok>.ngrok-free.dev  (no trailing / and no /api)
 const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
-const BASE_URL = RAW_BASE.replace(/\/+$/, ''); // strip trailing slashes
+const BASE_URL = RAW_BASE.replace(/\/+$/, '');
 const api = (p: string) => `${BASE_URL}/api${p}`;
 
 if (__DEV__) {
@@ -74,7 +74,6 @@ function toActivityType(input: unknown): ActivityType {
   return 'Walking';
 }
 
-/** Normalize activity payload from various backends. */
 function normalizeActivities(raw: any): Activity[] {
   const arr =
     (Array.isArray(raw) && raw) ||
@@ -197,12 +196,19 @@ function formatDistance(kmInput?: number) {
 function parseRecordDate(input: any): Date | undefined {
   if (!input) return undefined;
   if (input instanceof Date) return input;
-  if (typeof input === 'number') return new Date(input < 1e11 ? input * 1000 : input);
+
+  if (typeof input === 'number') {
+    // 10/13-digit epoch (sec/ms)
+    return new Date(input < 1e11 ? input * 1000 : input);
+  }
+
   if (typeof input === 'string') {
-    const s = input.trim();
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) return new Date(s.replace(' ', 'T'));
+    let s = input.trim();
+    if (/[zZ]$/.test(s)) s = s.replace(/[zZ]$/, '');
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) s = s.replace(' ', 'T');
     return new Date(s);
   }
+
   return undefined;
 }
 
@@ -228,7 +234,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 🔢 totals from DB
+  // totals
   const [totalEmission, setTotalEmission] = useState<number>(0);
   const [emissionLoading, setEmissionLoading] = useState<boolean>(false);
   const [totalReduction, setTotalReduction] = useState<number>(0);
@@ -241,7 +247,6 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
     return v != null ? String(v) : undefined;
   }, [user]);
 
-  /** ---- Fetch saved emissions and sum point_value ---- */
   const fetchEmissionTotal = useCallback(async () => {
     if (!uid) {
       setTotalEmission(0);
@@ -263,7 +268,6 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
     }
   }, [uid]);
 
-  /** ---- Fetch saved reductions and sum point_value ---- */
   const fetchReductionTotal = useCallback(async () => {
     if (!uid) {
       setTotalReduction(0);
@@ -294,7 +298,6 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
     }
   }, [isFocused, fetchEmissionTotal, fetchReductionTotal]);
 
-  /** ---- Recent activities (walking/cycling) ---- */
   useEffect(() => {
     const fetchActivities = async () => {
       if (!uid || !isFocused) {
@@ -357,14 +360,11 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
     fetchActivities();
   }, [isFocused, uid]);
 
-  const handleActivityPress = () => (navigation as any).navigate('Calculation', { user });
-
   const fullName =
     user?.fname || user?.lname
       ? `${user?.fname ?? ''} ${user?.lname ?? ''}`.trim()
       : 'Guest';
 
-  // --- total comparison (Reduction vs Emission) ---
   const diff = totalReduction - totalEmission;
   const diffColor = diff >= 0 ? styles.statPositive : styles.statNegative;
   const diffText = `${diff.toFixed(2)} kgCO₂e`;
@@ -394,27 +394,23 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
           </View>
         </View>
 
-        {/* Task / Goal card */}
-        <View style={styles.card}>
+        {/* Task / Goal card (fixed banner background) */}
+        <View style={[styles.card, { padding: 0, borderRadius: 16, overflow: 'hidden' }]}>
           <ImageBackground
             source={require('../../assets/trees.png')}
-            style={styles.taskBg}
-            imageStyle={{ borderRadius: 16, opacity: 0.12 }}
+            resizeMode="cover"
+            style={{ minHeight: 170, paddingHorizontal: 20, paddingVertical: 24, justifyContent: 'center' }}
+            imageStyle={{ borderRadius: 16 }}
           >
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
-            >
-              <View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexShrink: 1 }}>
                 <Text style={styles.cardTitle}>Complete your tasks</Text>
                 <Text style={styles.progressBig}>0%</Text>
                 <View style={styles.progressBarWrap}>
                   <View style={[styles.progressBarFill, { width: '0%' }]} />
                 </View>
               </View>
+
               <TouchableOpacity
                 style={styles.pillBtn}
                 onPress={() => (navigation as any).navigate('SetGoal', { user })}
@@ -465,7 +461,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
         {/* Activity summary */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Activity</Text>
+          <Text style={styles.sectionTitle}>Emission vs Reduction of all time</Text>
           <TouchableOpacity
             style={styles.activityBox}
             onPress={() => (navigation as any).navigate('Calculation', { user })}
@@ -489,51 +485,20 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
                 </Text>
               </View>
               <View style={styles.statRow}>
-                <Text style={styles.statLabel}>Total</Text>
+                <Text style={styles.statLabel}>Difference</Text>
                 <Text style={[styles.statValue, diffColor]}>{diffText}</Text>
               </View>
             </View>
           </TouchableOpacity>
         </View>
 
-        {/* Recent Activity */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
-          {loading ? (
-            <View style={{ paddingVertical: 16, alignItems: 'center' }}>
-              <ActivityIndicator color={theme.primary} />
-            </View>
-          ) : activities.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="time-outline" size={18} color={theme.sub} />
-              <Text style={styles.emptyText}>No recent activity yet</Text>
-            </View>
-          ) : (
-            activities.map((activity, idx) => {
-              const iconName =
-                activity.type === 'Cycling' ? ('bicycle-outline' as const) : ('walk-outline' as const);
-              return (
-                <TouchableOpacity
-                  key={`${activity.type}-${activity.id ?? idx}-${activity.record_date ?? idx}`}
-                  style={styles.recentItem}
-                  activeOpacity={0.9}
-                  onPress={() => (navigation as any).navigate('RecentAct', { activity })}
-                >
-                  <View style={styles.recentIcon}>
-                    <Ionicons name={iconName} size={18} color={theme.primaryDark} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.recentTitle}>{activity.title || activity.type}</Text>
-                    <Text style={styles.recentSub}>
-                      {formatDistance(activity.distance_km)} · {formatWhen(activity.record_date)}
-                    </Text>
-                  </View>
-                  <Ionicons name="chevron-forward" size={18} color={theme.border} />
-                </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
+        {/* Recent Activity (component) */}
+        <RecentActivityList
+          title="Tracking History"
+          activities={activities}
+          loading={loading}
+          onItemPress={(activity) => (navigation as any).navigate('RecentAct', { activity })}
+        />
 
         {__DEV__ && (
           <View style={{ marginTop: 12, alignItems: 'center' }}>
@@ -554,23 +519,63 @@ const styles = StyleSheet.create({
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#fff' },
   greeting: { fontSize: 12, color: theme.sub },
   name: { fontSize: 18, fontWeight: '700', color: theme.text },
-  pointsBadge: { backgroundColor: theme.chip, borderWidth: 1, borderColor: '#D1FAE5', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pointsBadge: {
+    backgroundColor: theme.chip, borderWidth: 1, borderColor: '#D1FAE5',
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+    flexDirection: 'row', alignItems: 'center', gap: 6
+  },
   pointsText: { color: theme.primaryDark, fontWeight: '700' },
-  card: { backgroundColor: theme.card, borderRadius: 16, padding: 16, marginTop: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
+
+  card: {
+    backgroundColor: theme.card, borderRadius: 16, padding: 16, marginTop: 16,
+    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 }, elevation: 3
+  },
   cardTitle: { color: theme.text, fontWeight: '700', fontSize: 16 },
-  taskBg: { borderRadius: 16 },
-  progressBig: { fontSize: 32, fontWeight: '800', color: theme.text, marginTop: 2 },
-  progressBarWrap: { height: 8, backgroundColor: '#F3F4F6', borderRadius: 999, marginTop: 8, overflow: 'hidden' },
-  progressBarFill: { height: 8, backgroundColor: theme.primary, borderRadius: 999 },
-  pillBtn: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: theme.border, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, flexDirection: 'row', alignItems: 'center', gap: 8 },
+
+  taskBg: { borderRadius: 16 }, // kept simple; we control sizing inline
+
+  progressBig: {
+    fontSize: 44, lineHeight: 44, fontWeight: '900', color: theme.text,
+    marginTop: 0, marginBottom: 6,
+  },
+  progressBarWrap: {
+    height: 14, backgroundColor: '#E9F5EF', borderRadius: 999,
+    marginTop: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#D9EAE2',
+  },
+  progressBarFill: {
+    height: '100%', backgroundColor: theme.primary, borderRadius: 999,
+    shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 }, elevation: 1,
+  },
+
+  pillBtn: {
+    backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: theme.border,
+    paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999,
+    flexDirection: 'row', alignItems: 'center', gap: 8
+  },
   pillBtnText: { color: theme.primaryDark, fontWeight: '700' },
+
   quickRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
-  quickCard: { flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, paddingVertical: 14, alignItems: 'center', gap: 8, borderWidth: 1, borderColor: theme.border },
-  quickIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.chip, alignItems: 'center', justifyContent: 'center' },
+  quickCard: {
+    flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, paddingVertical: 14,
+    alignItems: 'center', gap: 8, borderWidth: 1, borderColor: theme.border
+  },
+  quickIcon: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: theme.chip,
+    alignItems: 'center', justifyContent: 'center'
+  },
   quickLabel: { fontWeight: '700', color: theme.text },
+
   sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.text, marginBottom: 8 },
-  activityBox: { borderWidth: 1, borderColor: theme.border, borderRadius: 14, flexDirection: 'row', padding: 14, gap: 14, alignItems: 'center' },
-  co2Circle: { width: 90, height: 90, borderRadius: 45, backgroundColor: theme.chip, borderWidth: 1, borderColor: '#D1FAE5', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  activityBox: {
+    borderWidth: 1, borderColor: theme.border, borderRadius: 14,
+    flexDirection: 'row', padding: 14, gap: 14, alignItems: 'center'
+  },
+  co2Circle: {
+    width: 90, height: 90, borderRadius: 45, backgroundColor: theme.chip,
+    borderWidth: 1, borderColor: '#D1FAE5', alignItems: 'center', justifyContent: 'center', gap: 6
+  },
   co2XX: { fontSize: 14, fontWeight: '800', color: theme.primaryDark },
   activityInfo: { flex: 1, gap: 8 },
   statRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -579,10 +584,21 @@ const styles = StyleSheet.create({
   statMuted: { color: theme.sub, fontWeight: '600' },
   statPositive: { color: theme.primaryDark, fontWeight: '700' },
   statNegative: { color: theme.danger, fontWeight: '700' },
-  emptyState: { borderWidth: 1, borderColor: theme.border, borderRadius: 12, padding: 14, alignItems: 'center', gap: 6 },
+
+  emptyState: {
+    borderWidth: 1, borderColor: theme.border, borderRadius: 12,
+    padding: 14, alignItems: 'center', gap: 6
+  },
   emptyText: { color: theme.sub },
-  recentItem: { marginTop: 10, padding: 12, borderWidth: 1, borderColor: theme.border, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  recentIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.chip, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#D1FAE5' },
+
+  recentItem: {
+    marginTop: 10, padding: 12, borderWidth: 1, borderColor: theme.border,
+    borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 12
+  },
+  recentIcon: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: theme.chip,
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#D1FAE5'
+  },
   recentTitle: { fontWeight: '700', color: theme.text },
   recentSub: { color: theme.sub, marginTop: 2 },
 });

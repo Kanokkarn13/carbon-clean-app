@@ -1,71 +1,83 @@
-// src/screens/RecentActGrid.tsx
-import React, { useState } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import RecentActCard from '../components/RecentActCard';
+import React from 'react';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import RecentActCard, { Activity } from './RecentActCard';
 import { Ionicons } from '@expo/vector-icons';
+
+export type RecentActGridProps = {
+  title?: string;
+  activities: Activity[];
+  loading?: boolean;
+  onItemPress?: (a: Activity) => void;
+  columns?: number; // default 2
+};
 
 const theme = {
   primary: '#10B981',
   primaryDark: '#059669',
   bg: '#F6FAF8',
+  card: '#FFFFFF',
   text: '#0B1721',
   sub: '#6B7280',
+  border: '#E5E7EB',
+  chip: '#ECFDF5',
 };
 
-export default function RecentActGrid({ navigation, route }: any) {
-  const activities = route.params?.activities ?? [];
-  const [page, setPage] = useState(0);
-
-  const perPage = 5;
-  const paginated = activities.slice(page * perPage, page * perPage + perPage);
-  const totalPages = Math.ceil(activities.length / perPage);
+export default function RecentActGrid({
+  title = 'Recent Activity',
+  activities,
+  loading,
+  onItemPress,
+  columns = 2,
+}: RecentActGridProps) {
+  const col = Math.max(1, Math.floor(columns));
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Text style={styles.header}>Recent Activities</Text>
+    <View style={styles.card}>
+      <Text style={styles.sectionTitle}>{title}</Text>
 
-      <FlatList
-        data={paginated}
-        numColumns={2}
-        keyExtractor={(item) => `${item.id}`}
-        renderItem={({ item }) => (
-          <RecentActCard
-            item={item}
-            onPress={() => navigation.navigate('RecentAct', { activity: item })}
-          />
-        )}
-        contentContainerStyle={styles.grid}
-      />
-
-      {totalPages > 1 && (
-        <View style={styles.pagination}>
-          <TouchableOpacity
-            disabled={page === 0}
-            onPress={() => setPage((p) => p - 1)}
-            style={[styles.pageBtn, page === 0 && { opacity: 0.5 }]}
-          >
-            <Ionicons name="chevron-back" size={18} color={theme.primaryDark} />
-          </TouchableOpacity>
-          <Text style={styles.pageText}>{page + 1} / {totalPages}</Text>
-          <TouchableOpacity
-            disabled={page >= totalPages - 1}
-            onPress={() => setPage((p) => p + 1)}
-            style={[styles.pageBtn, page >= totalPages - 1 && { opacity: 0.5 }]}
-          >
-            <Ionicons name="chevron-forward" size={18} color={theme.primaryDark} />
-          </TouchableOpacity>
+      {loading ? (
+        <View style={styles.loadingBox}>
+          <ActivityIndicator />
+          <Text style={styles.loadingText}>Loading…</Text>
+        </View>
+      ) : activities.length === 0 ? (
+        <View style={styles.emptyBox}>
+          <Ionicons name="leaf-outline" size={18} color={theme.sub} />
+          <Text style={styles.emptyText}>No activity yet</Text>
+        </View>
+      ) : (
+        <View style={[styles.grid, { columnGap: 10, rowGap: 10 }]}>
+          {activities.map((a, i) => {
+            const key = `${a.id ?? 'na'}-${a.record_date ?? 'none'}-${a.title ?? 'untitled'}-${i}`;
+            return (
+              <View key={key} style={{ flexBasis: `${100 / col}%`, maxWidth: `${100 / col}%` }}>
+                <RecentActCard activity={a} onPress={onItemPress} />
+              </View>
+            );
+          })}
         </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.bg, padding: 12 },
-  header: { fontWeight: '800', fontSize: 18, color: theme.text, marginBottom: 10, textAlign: 'center' },
-  grid: { paddingBottom: 40 },
-  pagination: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 8 },
-  pageBtn: { padding: 8 },
-  pageText: { color: theme.sub, fontWeight: '700', marginHorizontal: 8 },
+  card: {
+    backgroundColor: theme.card,
+    borderRadius: 16,
+    padding: 12,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: theme.border,
+  },
+  sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.text, marginBottom: 6 },
+  loadingBox: { paddingVertical: 16, alignItems: 'center', gap: 8 },
+  loadingText: { color: theme.sub },
+  emptyBox: { paddingVertical: 16, alignItems: 'center', gap: 6 },
+  emptyText: { color: theme.sub },
+
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
 });
