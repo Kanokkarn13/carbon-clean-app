@@ -4,6 +4,7 @@ const router = express.Router();
 const db = require('../config/db');
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 
+/* Utility */
 function buildUpdateSet(allowed, payload) {
   const keys = [];
   const vals = [];
@@ -15,15 +16,10 @@ function buildUpdateSet(allowed, payload) {
   }
   return { setSql: keys.join(', '), values: vals };
 }
+const normalizeUsers = (rows) =>
+  rows.map(r => ({ ...r, status: Number(r.status) }));
 
-// 🔧 บังคับให้ status เป็นตัวเลข 0/1 เสมอ
-function normalizeUsers(rows) {
-  return rows.map((r) => ({
-    ...r,
-    status: Number(r.status), // <— กันทุกเคส
-  }));
-}
-
+/* ---------- Users (เหมือนเดิม) ---------- */
 router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -36,8 +32,7 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
       FROM users
       ORDER BY user_id DESC
     `);
-    const data = normalizeUsers(rows);
-    res.json({ data });
+    res.json({ data: normalizeUsers(rows) });
   } catch (err) {
     console.error('GET /admin/users error:', err);
     res.status(500).json({ message: 'DB error' });
@@ -47,14 +42,9 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
 router.put('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const allowed = [
-      'fname', 'lname', 'phone', 'role', 'vehicle',
-      'profile_pic_url', 'bic_goal', 'walk_goal', 'house_member', 'status'
-    ];
-
     const payload = { ...req.body };
 
-    // 🔒 sanitize ให้ตรง schema
+    // sanitize
     if (payload.status !== undefined) payload.status = Number(payload.status) ? 1 : 0;
     if (payload.phone !== undefined) payload.phone = String(payload.phone).slice(0, 10);
     if (payload.role !== undefined) payload.role = String(payload.role).slice(0, 5);
@@ -64,12 +54,15 @@ router.put('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
     if (payload.walk_goal !== undefined) payload.walk_goal = payload.walk_goal === '' ? null : Number(payload.walk_goal);
     if (payload.house_member !== undefined) payload.house_member = payload.house_member === '' ? null : Number(payload.house_member);
 
+    const allowed = [
+      'fname','lname','phone','role','vehicle',
+      'profile_pic_url','bic_goal','walk_goal','house_member','status'
+    ];
     const { setSql, values } = buildUpdateSet(allowed, payload);
     if (!setSql) return res.status(400).json({ message: 'No valid fields to update' });
 
     await db.query(`UPDATE users SET ${setSql} WHERE user_id = ?`, [...values, id]);
 
-    // ดึงกลับมาส่งคืน (พร้อม normalize)
     const [rows] = await db.query(`
       SELECT
         user_id, fname, lname, email, phone, role,
@@ -81,8 +74,7 @@ router.put('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
       WHERE user_id = ?
     `, [id]);
 
-    const data = normalizeUsers(rows)[0] || null;
-    res.json({ success: true, data });
+    res.json({ success: true, data: normalizeUsers(rows)[0] || null });
   } catch (err) {
     console.error('PUT /admin/users/:id error:', err);
     res.status(500).json({ message: 'DB error' });
@@ -122,9 +114,10 @@ router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+/* ---------- SUMMARY หลัก (เพิ่มกิจกรรม/คาร์บอน) ---------- */
 router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    // 1) ตัวเลขรวม/เฉลี่ย
+    // Users – overview
     const [overviewRows] = await db.query(`
       SELECT
         COUNT(*) AS total_users,
@@ -137,14 +130,9 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
         COUNT(CASE WHEN created_at >= (CURRENT_DATE - INTERVAL 7 DAY) THEN 1 END) AS new_7d
       FROM users
     `);
+    const ov = overviewRows[0] || {};
 
-    const overview = overviewRows[0] || {
-      total_users: 0, active_users: 0, blocked_users: 0,
-      avg_household: null, avg_walk_goal: null, avg_bic_goal: null,
-      admins: 0, new_7d: 0
-    };
-
-    // 2) signups รายเดือน (12 เดือนล่าสุด)
+    // Users – monthly signups
     const [monthlyRows] = await db.query(`
       SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym, COUNT(*) AS users
       FROM users
@@ -153,21 +141,17 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
       ORDER BY ym
     `);
 
-    // 3) breakdown สถานะ
+    // Users – status breakdown / role breakdown / vehicle
     const [statusRows] = await db.query(`
       SELECT CAST(status AS UNSIGNED) AS status, COUNT(*) AS cnt
       FROM users
       GROUP BY CAST(status AS UNSIGNED)
     `);
-
-    // 4) breakdown role
     const [roleRows] = await db.query(`
       SELECT role, COUNT(*) AS cnt
       FROM users
       GROUP BY role
     `);
-
-    // 5) vehicle distribution
     const [vehicleRows] = await db.query(`
       SELECT COALESCE(NULLIF(TRIM(vehicle), ''), '(none)') AS vehicle, COUNT(*) AS cnt
       FROM users
@@ -176,27 +160,178 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
       LIMIT 8
     `);
 
+    // Activities – totals/averages/pace
+    const [actTotals] = await db.query(`
+      SELECT
+        -- count
+        (SELECT COUNT(*) FROM walk_history) AS walk_count,
+        (SELECT COUNT(*) FROM bic_history ) AS bike_count,
+        -- distance all
+        COALESCE((SELECT SUM(distance_km) FROM walk_history),0) AS walk_km_all,
+        COALESCE((SELECT SUM(distance_km) FROM bic_history ),0) AS bike_km_all,
+        -- distance this month
+        COALESCE((SELECT SUM(distance_km) FROM walk_history WHERE record_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0) AS walk_km_month,
+        COALESCE((SELECT SUM(distance_km) FROM bic_history  WHERE record_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0) AS bike_km_month,
+        -- avg distance per activity
+        COALESCE((SELECT AVG(distance_km) FROM walk_history),0) AS walk_avg_km,
+        COALESCE((SELECT AVG(distance_km) FROM bic_history ),0) AS bike_avg_km,
+        -- avg pace km/h
+        COALESCE((SELECT AVG(distance_km / NULLIF(duration_sec,0) * 3600) FROM walk_history),0) AS walk_avg_pace_kmh,
+        COALESCE((SELECT AVG(distance_km / NULLIF(duration_sec,0) * 3600) FROM bic_history ),0) AS bike_avg_pace_kmh,
+        -- carbon totals
+        COALESCE((SELECT SUM(carbonReduce) FROM walk_history),0) AS walk_carbon_all,
+        COALESCE((SELECT SUM(carbonReduce) FROM bic_history ),0) AS bike_carbon_all,
+        COALESCE((SELECT SUM(carbonReduce) FROM walk_history WHERE record_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0) AS walk_carbon_month,
+        COALESCE((SELECT SUM(carbonReduce) FROM bic_history  WHERE record_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0) AS bike_carbon_month
+    `);
+
+    // Activities – active users 7/30 วัน
+    const [active7Rows] = await db.query(`
+      SELECT COUNT(DISTINCT user_id) AS active7
+      FROM (
+        SELECT user_id FROM walk_history WHERE record_date >= NOW() - INTERVAL 7 DAY
+        UNION ALL
+        SELECT user_id FROM bic_history  WHERE record_date >= NOW() - INTERVAL 7 DAY
+      ) t
+    `);
+    const [active30Rows] = await db.query(`
+      SELECT COUNT(DISTINCT user_id) AS active30
+      FROM (
+        SELECT user_id FROM walk_history WHERE record_date >= NOW() - INTERVAL 30 DAY
+        UNION ALL
+        SELECT user_id FROM bic_history  WHERE record_date >= NOW() - INTERVAL 30 DAY
+      ) t
+    `);
+
     res.json({
       success: true,
       data: {
         overview: {
-          total_users: Number(overview.total_users) || 0,
-          active_users: Number(overview.active_users) || 0,
-          blocked_users: Number(overview.blocked_users) || 0,
-          admins: Number(overview.admins) || 0,
-          new_7d: Number(overview.new_7d) || 0,
-          avg_household: overview.avg_household === null ? null : Number(overview.avg_household),
-          avg_walk_goal: overview.avg_walk_goal === null ? null : Number(overview.avg_walk_goal),
-          avg_bic_goal: overview.avg_bic_goal === null ? null : Number(overview.avg_bic_goal),
+          total_users: Number(ov.total_users) || 0,
+          active_users: Number(ov.active_users) || 0,
+          blocked_users: Number(ov.blocked_users) || 0,
+          admins: Number(ov.admins) || 0,
+          new_7d: Number(ov.new_7d) || 0,
+          avg_household: ov.avg_household == null ? null : Number(ov.avg_household),
+          avg_walk_goal: ov.avg_walk_goal == null ? null : Number(ov.avg_walk_goal),
+          avg_bic_goal: ov.avg_bic_goal == null ? null : Number(ov.avg_bic_goal),
         },
         monthly_signups: monthlyRows.map(r => ({ month: r.ym, users: Number(r.users) })),
         status_breakdown: statusRows.map(r => ({ status: Number(r.status), count: Number(r.cnt) })),
         role_breakdown: roleRows.map(r => ({ role: r.role || '(unknown)', count: Number(r.cnt) })),
         vehicle_distribution: vehicleRows.map(r => ({ vehicle: r.vehicle, count: Number(r.cnt) })),
+        activity: {
+          walk_count: Number(actTotals[0].walk_count) || 0,
+          bike_count: Number(actTotals[0].bike_count) || 0,
+          total_km_all: Number(actTotals[0].walk_km_all) + Number(actTotals[0].bike_km_all),
+          total_km_month: Number(actTotals[0].walk_km_month) + Number(actTotals[0].bike_km_month),
+          walk_avg_km: Number(actTotals[0].walk_avg_km) || 0,
+          bike_avg_km: Number(actTotals[0].bike_avg_km) || 0,
+          walk_avg_pace_kmh: Number(actTotals[0].walk_avg_pace_kmh) || 0,
+          bike_avg_pace_kmh: Number(actTotals[0].bike_avg_pace_kmh) || 0,
+          carbon_total_all: Number(actTotals[0].walk_carbon_all) + Number(actTotals[0].bike_carbon_all),
+          carbon_total_month: Number(actTotals[0].walk_carbon_month) + Number(actTotals[0].bike_carbon_month),
+          active7: Number(active7Rows[0].active7) || 0,
+          active30: Number(active30Rows[0].active30) || 0,
+        }
       }
     });
   } catch (err) {
     console.error('GET /admin/summary error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+/* ---------- Insights (กราฟ/ตาราง) ---------- */
+router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const type = (req.query.type || 'walk').toString().toLowerCase(); // walk | bike
+    const table = type === 'bike' || type === 'bic' ? 'bic_history' : 'walk_history';
+    const [rows] = await db.query(`
+      SELECT HOUR(record_date) AS hour_of_day, COUNT(*) AS cnt
+      FROM ${table}
+      GROUP BY HOUR(record_date)
+      ORDER BY hour_of_day
+    `);
+    res.json({ success: true, data: rows.map(r => ({ hour: Number(r.hour_of_day), count: Number(r.cnt) })) });
+  } catch (err) {
+    console.error('GET /admin/insights/hourly error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const type = (req.query.type || 'walk').toString().toLowerCase();
+    const table = type === 'bike' || type === 'bic' ? 'bic_history' : 'walk_history';
+    // 1=Sunday (MySQL) → map เป็นชื่อวัน
+    const [rows] = await db.query(`
+      SELECT DAYOFWEEK(record_date) AS dow, COUNT(*) AS cnt
+      FROM ${table}
+      GROUP BY DAYOFWEEK(record_date)
+      ORDER BY dow
+    `);
+    res.json({
+      success: true,
+      data: rows.map(r => ({ dow: Number(r.dow), count: Number(r.cnt) }))
+    });
+  } catch (err) {
+    console.error('GET /admin/insights/weekday error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const type = (req.query.type || 'walk').toString().toLowerCase();
+    const table = type === 'bike' || type === 'bic' ? 'bic_history' : 'walk_history';
+    const [rows] = await db.query(`
+      SELECT FLOOR(distance_km) AS bin_km, COUNT(*) AS cnt
+      FROM ${table}
+      GROUP BY FLOOR(distance_km)
+      ORDER BY bin_km
+      LIMIT 50
+    `);
+    res.json({ success: true, data: rows.map(r => ({ bin: Number(r.bin_km), count: Number(r.cnt) })) });
+  } catch (err) {
+    console.error('GET /admin/insights/distance_hist error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const window = (req.query.window || '30d').toString().toLowerCase(); // 7d|30d|90d
+    const metric = (req.query.metric || 'carbon').toString().toLowerCase(); // carbon|distance
+    const days = window === '7d' ? 7 : window === '90d' ? 90 : 30;
+
+    const metricCol = metric === 'distance' ? 'distance_km' : 'carbonReduce';
+
+    const [rows] = await db.query(`
+      SELECT u.user_id, u.fname, u.lname,
+             SUM(t.${metricCol}) AS total_metric
+      FROM users u
+      JOIN (
+        SELECT user_id, ${metricCol}, record_date FROM walk_history
+        UNION ALL
+        SELECT user_id, ${metricCol}, record_date FROM bic_history
+      ) t ON t.user_id = u.user_id
+      WHERE t.record_date >= NOW() - INTERVAL ? DAY
+      GROUP BY u.user_id
+      ORDER BY total_metric DESC
+      LIMIT 10
+    `, [days]);
+
+    res.json({
+      success: true,
+      data: rows.map(r => ({
+        user_id: r.user_id,
+        name: `${r.fname} ${r.lname}`,
+        total: Number(r.total_metric)
+      }))
+    });
+  } catch (err) {
+    console.error('GET /admin/insights/leaderboard error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
