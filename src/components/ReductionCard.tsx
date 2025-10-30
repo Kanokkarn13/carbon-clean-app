@@ -24,7 +24,7 @@ export default function ReductionCard({ item, onRemove }: Props) {
     <View style={styles.card}>
       <View style={styles.headerRow}>
         <Text style={styles.title} numberOfLines={2}>
-          {item.activity_from} -> {item.activity_to}
+          {item.activity_from} {'->'} {item.activity_to}
         </Text>
         {onRemove ? (
           <TouchableOpacity
@@ -40,7 +40,7 @@ export default function ReductionCard({ item, onRemove }: Props) {
 
       {(item.param_from || item.param_to) ? (
         <Text style={styles.line}>
-          {(item.param_from ?? '-')} -> {(item.param_to ?? '-')}
+          {(item.param_from ?? '-')} {'->'} {(item.param_to ?? '-')}
         </Text>
       ) : null}
 

@@ -1,5 +1,5 @@
 // src/screens/RecentAct.tsx
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert,
   Modal, TextInput, KeyboardAvoidingView, Platform, Dimensions
@@ -10,6 +10,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from './HomeStack';
 import type { ActivityPayload } from '../types/activity';
+import { evaluateActivityPoints } from '../utils/points';
 
 let MapView: any = null;
 try { MapView = require('react-native-maps').default; } catch {}
@@ -112,7 +113,8 @@ const RecentAct: React.FC = () => {
   const description0 = activity?.description || '';
 
   const distanceKm = typeof activity?.distance_km === 'number' ? activity.distance_km : toNum((activity as any)?.distance_km);
-  const steps = typeof activity?.step_total === 'number' ? activity.step_total.toLocaleString() : toNum((activity as any)?.step_total)?.toLocaleString();
+  const stepTotalNum = typeof activity?.step_total === 'number' ? activity.step_total : toNum((activity as any)?.step_total);
+  const steps = stepTotalNum != null ? stepTotalNum.toLocaleString() : undefined;
   const durationSecRaw =
     typeof activity?.duration_sec === 'number'
       ? activity.duration_sec
@@ -127,12 +129,40 @@ const RecentAct: React.FC = () => {
   const carbonG = carbonKg != null ? Math.round(carbonKg * 1000) : carbonReduceGAct;
 
   const rawPoints = typeof (activity as any)?.points === 'number' ? (activity as any).points : undefined;
-  const minutesFromDuration =
-    typeof durationSecRaw === 'number' && Number.isFinite(durationSecRaw)
-      ? Math.max(0, Math.round(durationSecRaw / 60))
-      : undefined;
-  const points = rawPoints ?? minutesFromDuration ?? 0;
-  const pointsLabel = `${Math.round(points).toLocaleString()} P`;
+  const evaluation = evaluateActivityPoints(
+    {
+      points: rawPoints,
+      point_value: rawPoints,
+      duration_sec: durationSecRaw,
+      distance_km: distanceKm,
+      step_total: stepTotalNum,
+      type: typeLabel,
+      activity: (activity as any)?.activity ?? (activity as any)?.activity_type ?? typeLabel,
+    },
+    durationSecRaw,
+  );
+  const points = evaluation.points;
+  const pointsDisplay = Math.round(points).toLocaleString();
+  const reasonText = (() => {
+    const code = (evaluation.reason || '').toLowerCase();
+    if (!code) return null;
+    if (code === 'speed-out-of-range') {
+      return isCycling ? 'Speed must stay between 3-30 km/h.' : 'Speed must stay between 3-15 km/h.';
+    }
+    if (code === 'step-rate-out-of-range') return 'Steps must stay between 0.2 and 200 per minute.';
+    if (code === 'no-duration') return 'Duration is required to validate points.';
+    if (code === 'no-distance') return 'Distance is required to validate points.';
+    if (code === 'no-steps') return 'Step count is required to validate points.';
+    if (code === 'missing-data') return 'Not enough data to validate this activity.';
+    return 'This activity does not meet the point criteria.';
+  })();
+  const [showReason, setShowReason] = useState(false);
+
+  useEffect(() => {
+    if (!showReason) return;
+    const timer = setTimeout(() => setShowReason(false), 5000);
+    return () => clearTimeout(timer);
+  }, [showReason]);
 
   const [showEdit, setShowEdit] = useState(false);
   const [editTitle, setEditTitle] = useState(title0);
@@ -255,9 +285,26 @@ const RecentAct: React.FC = () => {
 
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={styles.pointLabel}>Point Received</Text>
-              <View style={styles.pointChip}>
-              <Text style={styles.pointChipText}>{pointsLabel}</Text>
+              <View style={styles.pointRow}>
+                <View style={styles.pointChip}>
+                  <Text style={styles.pointChipText}>{pointsDisplay} P</Text>
+                </View>
+                {!evaluation.valid && reasonText && (
+                  <TouchableOpacity
+                    style={styles.pointInfoBtn}
+                    onPress={() => setShowReason(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Point validation info"
+                  >
+                    <Ionicons name="information-circle-outline" size={20} color={theme.sub} />
+                  </TouchableOpacity>
+                )}
               </View>
+              {!evaluation.valid && showReason && reasonText && (
+                <View style={styles.reasonBanner}>
+                  <Text style={styles.reasonText}>{reasonText}</Text>
+                </View>
+              )}
             </View>
           </View>
         </View>
@@ -408,6 +455,28 @@ const styles = StyleSheet.create({
   pointLabel: { color: theme.primaryDark, fontSize: 12, fontWeight: '700', marginBottom: 6, alignSelf: 'flex-end' },
   pointChip: { backgroundColor: '#F1FFF6', borderWidth: 1, borderColor: '#DDF7E7', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, alignSelf: 'flex-end' },
   pointChipText: { color: theme.text, fontWeight: '800' },
+  pointRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pointInfoBtn: {
+    padding: 4,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: '#FFFFFF',
+  },
+  reasonBanner: {
+    marginTop: 6,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FBBF24',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    maxWidth: 240,
+  },
+  reasonText: {
+    color: '#92400E',
+    fontSize: 12,
+  },
 
   /** one-row squares */
   squareRow: { marginTop: 12, flexDirection: 'row', gap: 10 },

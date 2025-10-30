@@ -17,7 +17,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList, User as StackUser } from './HomeStack';
 
 import RecentActivityList from '../components/RecentActivityList';
-import { computeActivityPoints, sumActivityPoints } from '../utils/points';
+import { evaluateActivityPoints, sumActivityPoints } from '../utils/points';
 
 type HomeNav = NativeStackNavigationProp<RootStackParamList, any>;
 
@@ -44,6 +44,8 @@ export type Activity = {
   carbon_reduce_kg?: number;
   carbon_reduce_g?: number;
   points?: number;
+  points_valid?: boolean;
+  points_reason?: string | null;
 };
 
 type Props = { navigation: HomeNav; user?: HomeUser };
@@ -162,16 +164,21 @@ function normalizeActivities(raw: any): Activity[] {
       ? (carbon_reduce_kg as number) * 1000
       : undefined;
 
-    const points = computeActivityPoints(
+    const evaluation = evaluateActivityPoints(
       {
         points: r?.points,
         point_value: r?.point_value,
         score: r?.score,
         duration_sec,
         duration: r?.duration,
+        distance_km,
+        step_total,
+        type,
+        activity: r?.activity ?? r?.activity_type,
       },
       duration_sec,
     );
+    const points = evaluation.points;
 
     return {
       type,
@@ -186,6 +193,8 @@ function normalizeActivities(raw: any): Activity[] {
       carbon_reduce_kg,
       carbon_reduce_g,
       points,
+      points_valid: evaluation.valid,
+      points_reason: evaluation.reason ?? null,
     };
   });
 
@@ -247,6 +256,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(false);
+  const [progressType, setProgressType] = useState<ActivityType>('Walking');
 
   // totals
   const [totalEmission, setTotalEmission] = useState<number>(0);
@@ -363,7 +373,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
           // eslint-disable-next-line no-console
           console.log('[Home] activities normalized[0]', list[0]);
         }
-        setActivities(list.slice(0, 10));
+        setActivities(list);
       } catch {
         setActivities([]);
       } finally {
@@ -378,6 +388,57 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
     user?.fname || user?.lname
       ? `${user?.fname ?? ''} ${user?.lname ?? ''}`.trim()
       : 'Guest';
+
+  const walkingDistance = useMemo(
+    () =>
+      activities
+        .filter((a) => a.type === 'Walking')
+        .reduce((sum, a) => sum + (Number(a.distance_km) || 0), 0),
+    [activities],
+  );
+  const cyclingDistance = useMemo(
+    () =>
+      activities
+        .filter((a) => a.type === 'Cycling')
+        .reduce((sum, a) => sum + (Number(a.distance_km) || 0), 0),
+    [activities],
+  );
+
+  const toGoalNumber = (value: any) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+
+  const walkingGoal = useMemo(
+    () =>
+      toGoalNumber(
+        (user as any)?.walk_goal ??
+          (user as any)?.walkGoal ??
+          (user as any)?.walking_goal ??
+          (user as any)?.walkingGoal,
+      ),
+    [user],
+  );
+  const cyclingGoal = useMemo(
+    () =>
+      toGoalNumber(
+        (user as any)?.bic_goal ??
+          (user as any)?.bike_goal ??
+          (user as any)?.cycling_goal ??
+          (user as any)?.cyclingGoal,
+      ),
+    [user],
+  );
+
+  const progressPercent = useMemo(() => {
+    const distance = progressType === 'Walking' ? walkingDistance : cyclingDistance;
+    const goal = progressType === 'Walking' ? walkingGoal : cyclingGoal;
+    if (!goal || goal <= 0) return 0;
+    return Math.min(100, (distance / goal) * 100);
+  }, [progressType, walkingDistance, cyclingDistance, walkingGoal, cyclingGoal]);
+
+  const progressDistance = progressType === 'Walking' ? walkingDistance : cyclingDistance;
+  const progressGoal = progressType === 'Walking' ? walkingGoal : cyclingGoal;
 
   const totalRecentPoints = useMemo(() => sumActivityPoints(activities), [activities]);
 
@@ -435,10 +496,42 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ flexShrink: 1 }}>
                 <Text style={styles.cardTitle}>Complete your tasks</Text>
-                <Text style={styles.progressBig}>0%</Text>
-                <View style={styles.progressBarWrap}>
-                  <View style={[styles.progressBarFill, { width: '0%' }]} />
+                <View style={styles.progressToggleRow}>
+                  <TouchableOpacity
+                    style={[styles.progressChip, progressType === 'Walking' && styles.progressChipActive]}
+                    onPress={() => setProgressType('Walking')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.progressChipText,
+                        progressType === 'Walking' && styles.progressChipTextActive,
+                      ]}
+                    >
+                      Walking
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.progressChip, progressType === 'Cycling' && styles.progressChipActive]}
+                    onPress={() => setProgressType('Cycling')}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.progressChipText,
+                        progressType === 'Cycling' && styles.progressChipTextActive,
+                      ]}
+                    >
+                      Cycling
+                    </Text>
+                  </TouchableOpacity>
                 </View>
+                <Text style={styles.progressBig}>{Math.round(progressPercent)}%</Text>
+                <Text style={styles.progressSub}>
+                  {progressGoal > 0
+                    ? `${progressDistance.toFixed(2)} / ${progressGoal.toFixed(2)} km`
+                    : `${progressDistance.toFixed(2)} km tracked`}
+                </Text>
               </View>
 
               <TouchableOpacity
@@ -566,9 +659,25 @@ const styles = StyleSheet.create({
   taskBg: { borderRadius: 16 }, // kept simple; we control sizing inline
 
   progressBig: {
-    fontSize: 44, lineHeight: 44, fontWeight: '900', color: theme.text,
-    marginTop: 0, marginBottom: 6,
+    fontSize: 44, lineHeight: 44, fontWeight: '900', color: '#a7fd95ff',
+    marginTop: 8, marginBottom: 4,
   },
+  progressSub: { color: '#FFFFFF', fontWeight: '600' },
+  progressToggleRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  progressChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
+  },
+  progressChipActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: theme.primaryDark,
+  },
+  progressChipText: { fontWeight: '700', color: theme.sub },
+  progressChipTextActive: { color: theme.primaryDark },
   progressBarWrap: {
     height: 14, backgroundColor: '#E9F5EF', borderRadius: 999,
     marginTop: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#D9EAE2',

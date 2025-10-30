@@ -26,6 +26,8 @@ export type Activity = {
   record_date?: string | Date | number;
   id?: string | number;
   points?: number;
+  points_valid?: boolean;
+  points_reason?: string | null;
   carbonReduce?: number;
   carbon_reduce_kg?: number;
   carbon_reduce_g?: number;

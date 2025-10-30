@@ -1,10 +1,10 @@
-// src/types/activity.ts
+﻿// src/types/activity.ts
 export type ActivityType = 'Cycling' | 'Walking';
 
 export type ActivityPayload = {
   type: ActivityType;
 
-  // ฟิลด์ที่หน้า RecentAct ต้องใช้
+  // à¸Ÿà¸´à¸¥à¸”à¹Œà¸—à¸µà¹ˆà¸«à¸™à¹‰à¸² RecentAct à¸•à¹‰à¸­à¸‡à¹ƒà¸Šà¹‰
   title?: string;
   description?: string;
   distance_km?: number;
@@ -12,8 +12,10 @@ export type ActivityPayload = {
   duration_sec?: number;
   record_date?: string | Date;
 
-  // เผื่อ API อื่น ๆ
+  // à¹€à¸œà¸·à¹ˆà¸­ API à¸­à¸·à¹ˆà¸™ à¹†
   created_at?: string | Date;
-  // ถ้าคุณมี id ของ activity ก็ใส่ได้
+  // à¸–à¹‰à¸²à¸„à¸¸à¸“à¸¡à¸µ id à¸‚à¸­à¸‡ activity à¸à¹‡à¹ƒà¸ªà¹ˆà¹„à¸”à¹‰
   id?: string | number;
+  points?: number;
+  points_valid?: boolean;
 };

@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -18,7 +19,8 @@ import {
 } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
-import { getUser } from "../services/authService";
+import { getUser, logout } from "../services/authService";
+import { CommonActions } from "@react-navigation/native";
 
 // ---------- Types ----------
 type Navigation = NativeStackNavigationProp<any>;
@@ -127,6 +129,32 @@ export default function ProfileScreen() {
     }, [])
   );
 
+  const handleLogout = useCallback(() => {
+    Alert.alert("Logout", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Logout",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await logout();
+          } catch (err) {
+            console.error("Logout failed:", err);
+          }
+          const parent = navigation.getParent();
+          const root = parent?.getParent();
+          const action = CommonActions.reset({
+            index: 0,
+            routes: [{ name: "Login" }],
+          });
+          if (root) root.dispatch(action);
+          else if (parent) parent.dispatch(action);
+          else navigation.dispatch(action);
+        },
+      },
+    ]);
+  }, [navigation]);
+
   const {
     totalWalkKm,
     totalCycleKm,
@@ -218,6 +246,7 @@ export default function ProfileScreen() {
             {user?.fname ?? ""} {user?.lname ?? ""}
           </Text>
 
+        <View style={styles.profileButtonRow}>
           <TouchableOpacity
             style={styles.editBtn}
             activeOpacity={0.9}
@@ -225,6 +254,15 @@ export default function ProfileScreen() {
           >
             <Text style={styles.editBtnText}>Edit Profile</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.logoutBtn}
+            activeOpacity={0.9}
+            onPress={handleLogout}
+          >
+            <Ionicons name="log-out-outline" size={18} color="#fff" />
+            <Text style={styles.logoutText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
         </View>
 
         {/* === Progress Section === */}
@@ -387,6 +425,11 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   pointText: { color: theme.text },
+  profileButtonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
   editBtn: {
     backgroundColor: theme.green,
     borderRadius: 999,
@@ -395,6 +438,16 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   editBtnText: { color: "#FFF", fontSize: 16 },
+  logoutBtn: {
+    backgroundColor: theme.orange,
+    borderRadius: 999,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  logoutText: { color: "#FFF", fontSize: 16, fontWeight: "600" },
 
   progressSection: { width: "100%", marginTop: 10 },
   progressHeaderRow: {

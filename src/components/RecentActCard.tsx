@@ -26,12 +26,11 @@ const theme = {
   chipBorder: '#D1FAE5',
 };
 
-// Palette used per activity type
 const PALETTE = {
   yellow: '#FACC15',
   yellowLight: '#FEF9C3',
-  blue: "#3B82F6",
-  bg: "#F6FAF8",
+  blue: '#3B82F6',
+  bg: '#F6FAF8',
 };
 
 const TYPE_COLORS: Record<ActivityType, { color: string; tint: string; icon: any }> = {
@@ -47,7 +46,7 @@ export type RecentActCardProps = {
 
 const fmtDistance = (km?: number) => {
   const v = Number(km ?? 0);
-  if (!isFinite(v) || v <= 0) return '0 m';
+  if (!Number.isFinite(v) || v <= 0) return '0 m';
   const meters = Math.round(v * 1000);
   if (meters < 1000) return `${meters} m`;
   const kmPart = Math.floor(meters / 1000);
@@ -55,37 +54,26 @@ const fmtDistance = (km?: number) => {
   return mPart ? `${kmPart} km ${mPart} m` : `${kmPart} km`;
 };
 
-/** Parse as *local wall time* (no unwanted UTC shift). */
 const parseLocalLike = (input?: string | number | Date) => {
   if (!input) return undefined as Date | undefined;
   if (input instanceof Date) return input;
-
   if (typeof input === 'number') {
-    // 10-digit seconds vs 13-digit ms
     return new Date(input < 1e11 ? input * 1000 : input);
   }
-
   let s = String(input).trim();
-
-  // If ends with Z (UTC), strip it so JS treats it as local wall time
   if (/[zZ]$/.test(s)) s = s.slice(0, -1);
-
-  // Normalize "YYYY-MM-DD HH:mm(:ss)" → "YYYY-MM-DDTHH:mm(:ss)"
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) {
-    s = s.replace(' ', 'T');
-  }
-
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?$/.test(s)) s = s.replace(' ', 'T');
   return new Date(s);
 };
 
 const fmtWhen = (dateLike?: string | number | Date) => {
   const d = parseLocalLike(dateLike);
-  if (!d || isNaN(d.getTime())) return '';
+  if (!d || Number.isNaN(d.getTime())) return '';
   const diff = Date.now() - d.getTime();
   if (diff < 60_000) return 'just now';
-  const h = Math.floor(diff / 3_600_000);
-  if (h < 24) return `${h} hours ago`;
-  const days = Math.floor(h / 24);
+  const hours = Math.floor(diff / 3_600_000);
+  if (hours < 24) return `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
   if (days <= 7) return `${days} days ago`;
   return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 };
@@ -141,3 +129,4 @@ const styles = StyleSheet.create({
   title: { fontWeight: '700', color: theme.text },
   sub: { color: theme.sub, marginTop: 2 },
 });
+
