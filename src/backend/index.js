@@ -8,6 +8,7 @@ const authController = require('./controllers/authController');
 const { saveWalking } = require('./controllers/saveWalkingController');
 const { saveCycling } = require('./controllers/saveCyclingController');
 const activityRoutes = require('./routes/activityRoutes');
+const rewardRoutes = require('./routes/rewardRoutes');
 
 // Emission (transport)
 const {
@@ -75,6 +76,7 @@ app.get('/api/reduction/saved/:user_id', listReductions);  // new (your app uses
 
 /* -------------------- Recent Activity (walking/cycling history) -------------------- */
 app.use('/api', activityRoutes);
+app.use('/api', rewardRoutes);
 
 /* -------------------- Utilities -------------------- */
 app.get('/api/health', async (_req, res) => {

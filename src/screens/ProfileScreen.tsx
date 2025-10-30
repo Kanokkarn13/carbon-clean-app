@@ -218,10 +218,6 @@ export default function ProfileScreen() {
             {user?.fname ?? ""} {user?.lname ?? ""}
           </Text>
 
-          <View style={styles.pointChip}>
-            <Text style={styles.pointText}>{user?.points ?? 0} P</Text>
-          </View>
-
           <TouchableOpacity
             style={styles.editBtn}
             activeOpacity={0.9}

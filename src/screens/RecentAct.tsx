@@ -113,7 +113,11 @@ const RecentAct: React.FC = () => {
 
   const distanceKm = typeof activity?.distance_km === 'number' ? activity.distance_km : toNum((activity as any)?.distance_km);
   const steps = typeof activity?.step_total === 'number' ? activity.step_total.toLocaleString() : toNum((activity as any)?.step_total)?.toLocaleString();
-  const duration = fmtDuration(typeof activity?.duration_sec === 'number' ? activity.duration_sec : toNum((activity as any)?.duration_sec));
+  const durationSecRaw =
+    typeof activity?.duration_sec === 'number'
+      ? activity.duration_sec
+      : toNum((activity as any)?.duration_sec);
+  const duration = fmtDuration(durationSecRaw);
   const { date: recordDate, time: recordTime } = fmtDateParts((activity as any)?.record_date ?? (activity as any)?.created_at);
 
   const carbonReduceKgTop = toNum(params.carbonReduce);
@@ -122,7 +126,13 @@ const RecentAct: React.FC = () => {
   const carbonKg = carbonReduceKgTop ?? carbonReduceKgAct ?? (carbonReduceGAct != null ? carbonReduceGAct / 1000 : undefined);
   const carbonG = carbonKg != null ? Math.round(carbonKg * 1000) : carbonReduceGAct;
 
-  const points = typeof (activity as any)?.points === 'number' ? (activity as any).points : undefined;
+  const rawPoints = typeof (activity as any)?.points === 'number' ? (activity as any).points : undefined;
+  const minutesFromDuration =
+    typeof durationSecRaw === 'number' && Number.isFinite(durationSecRaw)
+      ? Math.max(0, Math.round(durationSecRaw / 60))
+      : undefined;
+  const points = rawPoints ?? minutesFromDuration ?? 0;
+  const pointsLabel = `${Math.round(points).toLocaleString()} P`;
 
   const [showEdit, setShowEdit] = useState(false);
   const [editTitle, setEditTitle] = useState(title0);
@@ -246,7 +256,7 @@ const RecentAct: React.FC = () => {
             <View style={{ alignItems: 'flex-end' }}>
               <Text style={styles.pointLabel}>Point Received</Text>
               <View style={styles.pointChip}>
-                <Text style={styles.pointChipText}>{typeof points === 'number' ? `${points} P` : '2000 P'}</Text>
+              <Text style={styles.pointChipText}>{pointsLabel}</Text>
               </View>
             </View>
           </View>

@@ -17,6 +17,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList, User as StackUser } from './HomeStack';
 
 import RecentActivityList from '../components/RecentActivityList';
+import { computeActivityPoints, sumActivityPoints } from '../utils/points';
 
 type HomeNav = NativeStackNavigationProp<RootStackParamList, any>;
 
@@ -42,6 +43,7 @@ export type Activity = {
   carbonReduce?: number;
   carbon_reduce_kg?: number;
   carbon_reduce_g?: number;
+  points?: number;
 };
 
 type Props = { navigation: HomeNav; user?: HomeUser };
@@ -160,6 +162,17 @@ function normalizeActivities(raw: any): Activity[] {
       ? (carbon_reduce_kg as number) * 1000
       : undefined;
 
+    const points = computeActivityPoints(
+      {
+        points: r?.points,
+        point_value: r?.point_value,
+        score: r?.score,
+        duration_sec,
+        duration: r?.duration,
+      },
+      duration_sec,
+    );
+
     return {
       type,
       title,
@@ -172,6 +185,7 @@ function normalizeActivities(raw: any): Activity[] {
       carbonReduce: carbon_reduce_kg,
       carbon_reduce_kg,
       carbon_reduce_g,
+      points,
     };
   });
 
@@ -365,6 +379,10 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
       ? `${user?.fname ?? ''} ${user?.lname ?? ''}`.trim()
       : 'Guest';
 
+  const totalRecentPoints = useMemo(() => sumActivityPoints(activities), [activities]);
+
+  const pointsBadgeLabel = `${totalRecentPoints.toLocaleString()} P`;
+
   const diff = totalReduction - totalEmission;
   const diffColor = diff >= 0 ? styles.statPositive : styles.statNegative;
   const diffText = `${diff.toFixed(2)} kgCO₂e`;
@@ -388,10 +406,22 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
               <Text style={styles.name}>{fullName}</Text>
             </View>
           </View>
-          <View style={styles.pointsBadge}>
+          <TouchableOpacity
+            style={styles.pointsBadge}
+            activeOpacity={0.85}
+            onPress={() =>
+              navigation.navigate('Reward', {
+                user,
+                totalPoints: totalRecentPoints,
+                activities,
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel="View rewards"
+          >
             <Ionicons name="sparkles-outline" size={14} color={theme.primaryDark} />
-            <Text style={styles.pointsText}>0 P</Text>
-          </View>
+            <Text style={styles.pointsText}>{pointsBadgeLabel}</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Task / Goal card (fixed banner background) */}
