@@ -115,3 +115,28 @@ exports.listSavedActivities = async (req, res) => {
     return res.status(500).json({ error: 'Failed to load activities' });
   }
 };
+
+/* ---------- DELETE /api/emission/:id ---------- */
+exports.deleteSavedActivity = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return badRequest(res, ['id must be a positive integer']);
+
+    const userId = Number(req.query.user_id);
+    const params = [id];
+    let sql = `DELETE FROM \`${ACTIVITY_TABLE}\` WHERE id = ?`;
+    if (Number.isInteger(userId) && userId > 0) {
+      sql += ' AND user_id = ?';
+      params.push(userId);
+    }
+
+    const [result] = await db.query(sql, params);
+    if (!result || result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Activity not found' });
+    }
+    return res.status(204).send();
+  } catch (err) {
+    console.error('[deleteSavedActivity] error:', err);
+    return res.status(500).json({ error: 'Failed to delete activity' });
+  }
+};

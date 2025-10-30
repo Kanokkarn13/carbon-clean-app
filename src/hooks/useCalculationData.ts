@@ -125,6 +125,40 @@ export function useCalculationData(userParam?: Partial<User>, params?: any) {
     try { await fetchReductions(); } finally { setRefreshingReduce(false); }
   }, [fetchReductions]);
 
+  const removeEmission = useCallback(
+    async (id: number) => {
+      if (!Number.isInteger(userId) || userId <= 0) {
+        throw new Error('Login required');
+      }
+      const res = await fetch(api(`/emission/${id}?user_id=${userId}`), {
+        method: 'DELETE',
+      });
+      if (!res.ok && res.status !== 204) {
+        const text = await res.text();
+        throw new Error(text || 'Failed to delete emission activity');
+      }
+      await fetchSaved();
+    },
+    [userId, fetchSaved],
+  );
+
+  const removeReduction = useCallback(
+    async (id: number) => {
+      if (!Number.isInteger(userId) || userId <= 0) {
+        throw new Error('Login required');
+      }
+      const res = await fetch(api(`/reduction/${id}?user_id=${userId}`), {
+        method: 'DELETE',
+      });
+      if (!res.ok && res.status !== 204) {
+        const text = await res.text();
+        throw new Error(text || 'Failed to delete reduction activity');
+      }
+      await fetchReductions();
+    },
+    [userId, fetchReductions],
+  );
+
   return {
     user,
     peopleLabel,
@@ -134,5 +168,7 @@ export function useCalculationData(userParam?: Partial<User>, params?: any) {
 
     openReduce, setOpenReduce,
     loadingReduce, reduceError, reduceItems, refreshingReduce, totalReduction, onRefreshReduce,
+    removeEmission,
+    removeReduction,
   };
 }

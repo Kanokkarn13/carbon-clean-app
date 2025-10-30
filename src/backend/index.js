@@ -14,12 +14,14 @@ const rewardRoutes = require('./routes/rewardRoutes');
 const {
   saveTransportEmission,
   listSavedActivities,
+  deleteSavedActivity,
 } = require('./controllers/saveEmissionController');
 
 // Reduction (carbon offset)
 const {
   saveReduction,
   listReductions,
+  deleteReduction,
 } = require('./controllers/saveReductionController');
 
 const app = express();
@@ -68,11 +70,13 @@ app.post('/api/save-cycling', saveCycling);
 app.post('/api/emission', saveTransportEmission);
 // GET saved by user id
 app.get('/api/saved/:user_id', listSavedActivities);
+app.delete('/api/emission/:id', deleteSavedActivity);
 
 /* -------------------- Reduction Save/List (rc_point) -------------------- */
 app.post('/api/reduction', saveReduction);
 app.get('/api/reduction/:user_id', listReductions);        // legacy
 app.get('/api/reduction/saved/:user_id', listReductions);  // new (your app uses this)
+app.delete('/api/reduction/:id', deleteReduction);
 
 /* -------------------- Recent Activity (walking/cycling history) -------------------- */
 app.use('/api', activityRoutes);

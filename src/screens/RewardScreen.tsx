@@ -33,6 +33,22 @@ type DecoratedReward = Reward & {
   highlightColor: string;
   logoColor: string;
   logoLetter: string;
+  logoUrl: string | null;
+};
+
+const FALLBACK_LOGOS: { match: RegExp; url: string }[] = [
+  { match: /starbucks/i, url: 'https://upload.wikimedia.org/wikipedia/sco/thumb/d/d3/Starbucks_Corporation_Logo_2011.svg/297px-Starbucks_Corporation_Logo_2011.svg.png?20170312192423' },
+  { match: /grab/i, url: 'https://upload.wikimedia.org/wikipedia/en/thumb/1/12/Grab_%28application%29_logo.svg/960px-Grab_%28application%29_logo.svg.png?20220725160235' },
+  { match: /shopee/i, url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Shopee.svg/960px-Shopee.svg.png' },
+  { match: /amazon/i, url: 'https://images.seeklogo.com/logo-png/37/1/cafe-amazon-logo-png_seeklogo-373926.png' },
+];
+
+const resolveLogoUrl = (title?: string, imageUrl?: string | null) => {
+  const clean = imageUrl?.trim();
+  if (clean) return clean;
+  if (!title) return null;
+  const match = FALLBACK_LOGOS.find((entry) => entry.match.test(title));
+  return match ? match.url : null;
 };
 
 export default function RewardScreen() {
@@ -93,6 +109,7 @@ export default function RewardScreen() {
         highlightColor: palette.highlight,
         logoColor: palette.logo,
         logoLetter: letter,
+        logoUrl: resolveLogoUrl(reward.title, reward.image_url),
       };
     });
   }, [rewards]);
@@ -123,7 +140,7 @@ export default function RewardScreen() {
         <View style={styles.profileRow}>
           <View style={styles.avatarWrap}>
             <Image
-              source={require('../../assets/trees.png')}
+              source={{ uri: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }}
               style={styles.avatar}
               resizeMode="cover"
             />
@@ -181,17 +198,19 @@ export default function RewardScreen() {
                 })
               }
             >
-              {item.image_url ? (
-                <Image
-                  source={{ uri: item.image_url }}
-                  style={styles.rewardImage}
-                  resizeMode="cover"
-                />
-              ) : (
-                <View style={[styles.logoBubble, { backgroundColor: item.highlightColor }]}>
-                  <Text style={[styles.logoLetter, { color: item.logoColor }]}>{item.logoLetter}</Text>
-                </View>
-              )}
+              <View style={styles.rewardLogo}>
+                {item.logoUrl ? (
+                  <Image
+                    source={{ uri: item.logoUrl }}
+                    style={styles.rewardLogoImage}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <View style={[styles.logoBubble, { backgroundColor: item.highlightColor }]}>
+                    <Text style={[styles.logoLetter, { color: item.logoColor }]}>{item.logoLetter}</Text>
+                  </View>
+                )}
+              </View>
               <View style={styles.rewardInfo}>
                 <Text style={styles.rewardTitle} numberOfLines={3}>
                   {item.title}
@@ -364,11 +383,18 @@ const styles = StyleSheet.create({
     elevation: 1,
     minHeight: 96,
   },
-  rewardImage: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
-    backgroundColor: '#EFF6F3',
+  rewardLogo: {
+    width: 60,
+    height: 60,
+    borderRadius: 16,
+    backgroundColor: '#F2F6F4',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  rewardLogoImage: {
+    width: '70%',
+    height: '70%',
   },
   rewardInfo: {
     flex: 1,

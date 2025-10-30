@@ -144,3 +144,29 @@ exports.listReductions = async (req, res) => {
       .json({ error: 'Failed to load reductions', details: String(e?.message || e) });
   }
 };
+
+/* ---------- DELETE /api/reduction/:id ---------- */
+exports.deleteReduction = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return bad(res, ['id must be a positive integer']);
+
+    const userId = Number(req.query.user_id);
+    const params = [id];
+    let sql = `DELETE FROM \`${TABLE}\` WHERE id = ?`;
+    if (Number.isInteger(userId) && userId > 0) {
+      sql += ' AND user_id = ?';
+      params.push(userId);
+    }
+
+    const out = await db.query(sql, params);
+    const result = unwrap(out);
+    if (!result || result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Reduction not found' });
+    }
+    return res.status(204).send();
+  } catch (err) {
+    console.error('[deleteReduction] error:', err);
+    return res.status(500).json({ error: 'Failed to delete reduction' });
+  }
+};

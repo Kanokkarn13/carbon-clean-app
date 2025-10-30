@@ -22,6 +22,7 @@ type RewardDetailRouteParams = {
     highlightColor?: string;
     logoColor?: string;
     logoLetter?: string;
+    logoUrl?: string | null;
   };
   totalPoints?: number;
   user?: User;
@@ -39,6 +40,7 @@ export default function RewardDetail() {
   const highlight = reward?.highlightColor ?? 'rgba(16, 185, 129, 0.12)';
   const logoColor = reward?.logoColor ?? theme.primaryDark;
   const logoLetter = reward?.logoLetter ?? reward?.title?.charAt(0)?.toUpperCase() ?? 'R';
+  const logoUrl = reward?.logoUrl ?? reward?.image_url ?? null;
 
   const expiresText = reward?.expires_at
     ? new Date(reward.expires_at).toLocaleDateString()
@@ -60,13 +62,15 @@ export default function RewardDetail() {
         </View>
 
         <View style={[styles.hero, { backgroundColor: highlight }]}>
-          {reward?.image_url ? (
-            <Image source={{ uri: reward.image_url }} style={styles.heroImage} resizeMode="contain" />
-          ) : (
-            <View style={[styles.logoBubble, { backgroundColor: '#fff' }]}>
-              <Text style={[styles.logoLetter, { color: logoColor }]}>{logoLetter}</Text>
-            </View>
-          )}
+          <View style={styles.heroLogo}>
+            {logoUrl ? (
+              <Image source={{ uri: logoUrl }} style={styles.heroLogoImage} resizeMode="contain" />
+            ) : (
+              <View style={[styles.logoBubble, { backgroundColor: '#fff' }]}>
+                <Text style={[styles.logoLetter, { color: logoColor }]}>{logoLetter}</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.rewardTitle}>{reward?.title ?? 'Reward'}</Text>
           <Text style={styles.pointsValue}>{pointsLabel}</Text>
         </View>
@@ -148,12 +152,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.border,
   },
-  heroImage: {
-    width: 140,
-    height: 100,
-    marginBottom: 12,
-    borderRadius: 12,
-    backgroundColor: '#fff',
+  heroLogo: {
+    width: 120,
+    height: 120,
+    borderRadius: 30,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(16,185,129,0.15)',
+  },
+  heroLogoImage: {
+    width: '70%',
+    height: '70%',
   },
   logoBubble: {
     width: 60,

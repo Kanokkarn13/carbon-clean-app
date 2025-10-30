@@ -51,7 +51,12 @@ export type RootStackParamList = {
   Reward: { user?: User; totalPoints?: number; activities?: Activity[] } | undefined;
   RewardDetail:
     | {
-        reward: Reward;
+        reward: Reward & {
+          highlightColor?: string;
+          logoColor?: string;
+          logoLetter?: string;
+          logoUrl?: string | null;
+        };
         user?: User;
         totalPoints?: number;
       }

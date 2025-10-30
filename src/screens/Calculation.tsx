@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, RefreshControl
+  ActivityIndicator, RefreshControl, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,7 +35,49 @@ const Calculation = ({ navigation }: any) => {
 
     openReduce, setOpenReduce,
     loadingReduce, reduceError, reduceItems, refreshingReduce, totalReduction, onRefreshReduce,
+    removeEmission,
+    removeReduction,
   } = useCalculationData(route?.params?.user, route?.params);
+
+  const confirmRemoveEmission = (row: SavedRow) => {
+    Alert.alert(
+      'Remove emission activity',
+      'Are you sure you want to remove this emission record?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            removeEmission(row.id).catch((err: any) => {
+              Alert.alert('Failed to delete', err?.message || 'Unknown error');
+            });
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  };
+
+  const confirmRemoveReduction = (row: ReductionRow) => {
+    Alert.alert(
+      'Remove reduction activity',
+      'Do you want to remove this reduction record?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            removeReduction(row.id).catch((err: any) => {
+              Alert.alert('Failed to delete', err?.message || 'Unknown error');
+            });
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -139,7 +181,7 @@ const Calculation = ({ navigation }: any) => {
                   contentContainerStyle={styles.savedScroller}
                 >
                   {items.map((row: SavedRow) => (
-                    <EmissionCard key={row.id} item={row} />
+                    <EmissionCard key={row.id} item={row} onRemove={confirmRemoveEmission} />
                   ))}
                 </ScrollView>
               )}
@@ -223,7 +265,7 @@ const Calculation = ({ navigation }: any) => {
                   contentContainerStyle={styles.savedScroller}
                 >
                   {reduceItems.map((row: ReductionRow) => (
-                    <ReductionCard key={row.id} item={row} />
+                    <ReductionCard key={row.id} item={row} onRemove={confirmRemoveReduction} />
                   ))}
                 </ScrollView>
               )}
