@@ -22,7 +22,7 @@ exports.listRewards = async function listRewards(_req, res) {
           expires_at,
           active,
           stock
-        FROM rewards
+        FROM reward
         WHERE active = 1 AND (expires_at IS NULL OR expires_at >= NOW())
         ORDER BY cost_points ASC, title ASC
       `.trim(),
@@ -35,4 +35,3 @@ exports.listRewards = async function listRewards(_req, res) {
     res.status(500).json({ error: 'Failed to load rewards' });
   }
 };
-
