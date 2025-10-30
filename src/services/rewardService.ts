@@ -8,6 +8,7 @@ export type Reward = {
   expires_at: string | null;
   active: boolean;
   stock: number | null;
+  image_url: string | null;
 };
 
 type RewardResponse = {
@@ -32,6 +33,6 @@ export async function fetchRewards(): Promise<Reward[]> {
     stock:
       item?.stock === null || item?.stock === undefined ? null : Number(item?.stock),
     cost_points: Number(item?.cost_points) || 0,
+    image_url: item?.image_url ?? null,
   }));
 }
-

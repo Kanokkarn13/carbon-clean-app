@@ -9,16 +9,16 @@ import {
   TouchableOpacity,
   View,
   Image,
-  ImageBackground,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import theme from '../utils/theme';
 import { sumActivityPoints, ActivityPointSource } from '../utils/points';
 import { fetchRewards, Reward } from '../services/rewardService';
+import type { RootStackParamList, User } from './HomeStack';
 
 const COLOR_PALETTE = [
   { highlight: '#FEF3C7', logo: '#92400E' },
@@ -36,11 +36,12 @@ type DecoratedReward = Reward & {
 };
 
 export default function RewardScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList, 'Reward'>>();
   const route = useRoute<any>();
   const params = (route?.params ?? {}) as {
     totalPoints?: number;
     activities?: ActivityPointSource[];
+    user?: User;
   };
   const activities = Array.isArray(params.activities) ? params.activities : undefined;
   const totalPointsParam =
@@ -56,6 +57,14 @@ export default function RewardScreen() {
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const userName = useMemo(() => {
+    const fname = params.user?.fname ?? '';
+    const lname = params.user?.lname ?? '';
+    const full = `${fname} ${lname}`.trim();
+    if (full) return full;
+    return params.user?.email ?? 'Member';
+  }, [params.user]);
 
   const loadRewards = useCallback(async () => {
     setLoading(true);
@@ -99,8 +108,6 @@ export default function RewardScreen() {
     );
   }, [decoratedRewards, query]);
 
-  const featuredReward = decoratedRewards[0];
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" backgroundColor={theme.bg} />
@@ -109,7 +116,7 @@ export default function RewardScreen() {
           <TouchableOpacity style={styles.headerButton} onPress={() => navigation.goBack()}>
             <Ionicons name="arrow-back" size={22} color={theme.text} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Point Redemption</Text>
+          <Text style={styles.headerTitle}>Rewards</Text>
           <View style={styles.headerPlaceholder} />
         </View>
 
@@ -122,37 +129,15 @@ export default function RewardScreen() {
             />
           </View>
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>Anita Wongchawalit</Text>
-            <Text style={styles.profileSubtitle}>Eco Member</Text>
+            <Text style={styles.profileName} numberOfLines={1}>
+              {userName}
+            </Text>
+            <Text style={styles.profileSubtitle}>Available points</Text>
           </View>
           <View style={styles.pointChip}>
             <Text style={styles.pointChipValue}>{pointsLabel}</Text>
           </View>
         </View>
-
-        <ImageBackground
-          source={require('../../assets/reduce-bg.png')}
-          style={styles.recommendCard}
-          imageStyle={styles.recommendImage}
-        >
-          <LinearGradient
-            colors={['rgba(11, 23, 33, 0.75)', 'rgba(11, 23, 33, 0.05)']}
-            style={StyleSheet.absoluteFill}
-          />
-          <Text style={styles.recommendLabel}>Recommend</Text>
-          <Text style={styles.recommendTitle} numberOfLines={2}>
-            {featuredReward ? featuredReward.title : 'for you'}
-          </Text>
-          {featuredReward ? (
-            <View style={styles.featuredChip}>
-              <Ionicons name="gift-outline" size={14} color="#fff" />
-              <Text style={styles.featuredChipText}>
-                {featuredReward.cost_points.toLocaleString()} P
-              </Text>
-            </View>
-          ) : null}
-        </ImageBackground>
-
         <View style={styles.searchRow}>
           <Ionicons name="search" size={18} color={theme.primary} />
           <TextInput
@@ -168,7 +153,7 @@ export default function RewardScreen() {
         {loading && (
           <View style={styles.stateBox}>
             <ActivityIndicator color={theme.primary} />
-            <Text style={styles.stateText}>Loading rewards…</Text>
+            <Text style={styles.stateText}>Loading rewards�</Text>
           </View>
         )}
 
@@ -184,33 +169,38 @@ export default function RewardScreen() {
 
         <View style={styles.rewardsList}>
           {items.map((item) => (
-            <View key={item.id} style={styles.ticket}>
-              <View style={styles.ticketNotchLeft} />
-              <View style={styles.ticketNotchRight} />
-              <View style={styles.ticketInner}>
-                <View style={styles.ticketLeft}>
-                  <View style={[styles.logoBubble, { backgroundColor: item.highlightColor }]}>
-                    <Text style={[styles.logoLetter, { color: item.logoColor }]}>{item.logoLetter}</Text>
-                  </View>
-                  <Text style={styles.ticketBrand} numberOfLines={2}>
-                    {item.title}
-                  </Text>
+            <TouchableOpacity
+              key={item.id}
+              style={styles.rewardRow}
+              activeOpacity={0.9}
+              onPress={() =>
+                navigation.navigate('RewardDetail', {
+                  reward: item,
+                  totalPoints,
+                  user: params.user,
+                })
+              }
+            >
+              {item.image_url ? (
+                <Image
+                  source={{ uri: item.image_url }}
+                  style={styles.rewardImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={[styles.logoBubble, { backgroundColor: item.highlightColor }]}>
+                  <Text style={[styles.logoLetter, { color: item.logoColor }]}>{item.logoLetter}</Text>
                 </View>
-                <View style={styles.ticketDivider}>
-                  <View style={styles.ticketDividerLine} />
-                </View>
-                <View style={styles.ticketRight}>
-                  <Text style={styles.ticketVendor} numberOfLines={2}>
-                    {item.description || 'Redeem this reward'}
-                  </Text>
-                  <Text style={styles.ticketPoints}>
-                    {item.cost_points.toLocaleString()}
-                    <Text style={styles.ticketPointsSuffix}> Points</Text>
-                  </Text>
-                  {item.stock === 0 && <Text style={styles.ticketStock}>Out of stock</Text>}
-                </View>
+              )}
+              <View style={styles.rewardInfo}>
+                <Text style={styles.rewardTitle} numberOfLines={3}>
+                  {item.title}
+                </Text>
+                {item.stock === 0 && <Text style={styles.rewardSubtitle}>Out of stock</Text>}
               </View>
-            </View>
+              <Text style={styles.rewardPoints}>{item.cost_points.toLocaleString()} P</Text>
+              <Ionicons name="chevron-forward" size={18} color={theme.sub} />
+            </TouchableOpacity>
           ))}
 
           {items.length === 0 && (
@@ -309,43 +299,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
   },
-  recommendCard: {
-    height: 160,
-    borderRadius: 20,
-    overflow: 'hidden',
-    marginBottom: 24,
-    justifyContent: 'flex-end',
-    padding: 20,
-  },
-  recommendImage: {
-    borderRadius: 20,
-  },
-  recommendLabel: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#fff',
-  },
-  recommendTitle: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#fff',
-  },
-  featuredChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(15, 118, 110, 0.9)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    gap: 6,
-    marginTop: 12,
-  },
-  featuredChipText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 14,
-  },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -384,47 +337,6 @@ const styles = StyleSheet.create({
   rewardsList: {
     gap: 16,
   },
-  ticket: {
-    backgroundColor: '#fff',
-    borderRadius: 22,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    position: 'relative',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 1,
-  },
-  ticketNotchLeft: {
-    position: 'absolute',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: theme.bg,
-    left: -11,
-    top: '50%',
-    marginTop: -11,
-  },
-  ticketNotchRight: {
-    position: 'absolute',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: theme.bg,
-    right: -11,
-    top: '50%',
-    marginTop: -11,
-  },
-  ticketInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  ticketLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
   logoBubble: {
     width: 48,
     height: 48,
@@ -436,47 +348,48 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
   },
-  ticketBrand: {
-    marginLeft: 14,
-    fontSize: 15,
-    fontWeight: '600',
-    color: theme.text,
-  },
-  ticketDivider: {
-    width: 50,
+  rewardRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-  },
-  ticketDividerLine: {
-    width: 1,
-    height: 48,
-    borderStyle: 'dashed',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: theme.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 1,
+    minHeight: 96,
   },
-  ticketRight: {
+  rewardImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: '#EFF6F3',
+  },
+  rewardInfo: {
     flex: 1,
+    marginHorizontal: 12,
+    justifyContent: 'center',
   },
-  ticketVendor: {
-    fontSize: 15,
-    fontWeight: '600',
+  rewardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
     color: theme.text,
   },
-  ticketPoints: {
-    fontSize: 22,
+  rewardSubtitle: {
+    fontSize: 12,
+    color: '#DC2626',
+    marginTop: 2,
+  },
+  rewardPoints: {
+    fontSize: 16,
     fontWeight: '800',
     color: theme.primaryDark,
-    marginTop: 4,
-  },
-  ticketPointsSuffix: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: theme.sub,
-  },
-  ticketStock: {
-    marginTop: 6,
-    color: '#DC2626',
-    fontSize: 12,
-    fontWeight: '700',
+    marginRight: 10,
   },
   emptyState: {
     paddingVertical: 40,

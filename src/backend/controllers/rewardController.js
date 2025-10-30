@@ -8,6 +8,7 @@ const mapRewardRow = (row = {}) => ({
   expires_at: row.expires_at || null,
   active: Boolean(row.active ?? 0),
   stock: row.stock != null ? Number(row.stock) : null,
+  image_url: row.image_url || null,
 });
 
 exports.listRewards = async function listRewards(_req, res) {
@@ -21,7 +22,8 @@ exports.listRewards = async function listRewards(_req, res) {
           cost_points,
           expires_at,
           active,
-          stock
+          stock,
+          image_url
         FROM reward
         WHERE active = 1 AND (expires_at IS NULL OR expires_at >= NOW())
         ORDER BY cost_points ASC, title ASC
