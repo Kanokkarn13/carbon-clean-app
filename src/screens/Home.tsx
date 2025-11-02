@@ -471,14 +471,13 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
             style={styles.pointsBadge}
             activeOpacity={0.85}
             onPress={() =>
-              navigation.navigate('Reward', {
+              navigation.navigate('RedeemHistory', {
                 user,
                 totalPoints: totalRecentPoints,
-                activities,
               })
             }
             accessibilityRole="button"
-            accessibilityLabel="View rewards"
+            accessibilityLabel="View RedeemHistory"
           >
             <Ionicons name="sparkles-outline" size={14} color={theme.primaryDark} />
             <Text style={styles.pointsText}>{pointsBadgeLabel}</Text>
@@ -572,13 +571,19 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
           <TouchableOpacity
             style={styles.quickCard}
-            onPress={() => (navigation as any).navigate('RedeemHistory', { user })}
+            onPress={() =>
+              navigation.navigate('Reward', {
+                user,
+                totalPoints: totalRecentPoints,
+                activities,
+              })
+            }
             activeOpacity={0.9}
           >
             <View style={styles.quickIcon}>
               <Ionicons name="gift-outline" size={20} color={theme.primaryDark} />
             </View>
-            <Text style={styles.quickLabel}>Redeem History</Text>
+            <Text style={styles.quickLabel}>Reward</Text>
           </TouchableOpacity>
         </View>
 

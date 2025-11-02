@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -59,12 +59,22 @@ export default function RewardScreen() {
     activities?: ActivityPointSource[];
     user?: User;
   };
-  const activities = Array.isArray(params.activities) ? params.activities : undefined;
+  const rawActivities =
+    params && Object.prototype.hasOwnProperty.call(params, 'activities')
+      ? (params as { activities?: ActivityPointSource[] }).activities
+      : undefined;
+  const activities = Array.isArray(rawActivities) ? rawActivities : undefined;
   const totalPointsParam =
     typeof params.totalPoints === 'number' ? params.totalPoints : undefined;
 
   const totalPoints = useMemo(() => {
-    if (activities?.length) return sumActivityPoints(activities);
+    if (Array.isArray(activities) && activities.length) {
+      try {
+        return Math.max(0, Math.round(sumActivityPoints(activities as any)));
+      } catch {
+        // fall back to provided total
+      }
+    }
     return totalPointsParam != null ? Math.max(0, Math.round(totalPointsParam)) : 0;
   }, [activities, totalPointsParam]);
 
@@ -134,7 +144,20 @@ export default function RewardScreen() {
             <Ionicons name="arrow-back" size={22} color={theme.text} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Rewards</Text>
-          <View style={styles.headerPlaceholder} />
+          <TouchableOpacity
+            style={styles.headerHistoryButton}
+            activeOpacity={0.85}
+            onPress={() =>
+              navigation.navigate('RedeemHistory', {
+                user: params.user,
+                totalPoints,
+              })
+            }
+            accessibilityRole="button"
+            accessibilityLabel="View redeem history"
+          >
+            <Ionicons name="time-outline" size={20} color={theme.primaryDark} />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.profileRow}>
@@ -170,7 +193,7 @@ export default function RewardScreen() {
         {loading && (
           <View style={styles.stateBox}>
             <ActivityIndicator color={theme.primary} />
-            <Text style={styles.stateText}>Loading rewards�</Text>
+            <Text style={styles.stateText}>Loading rewards...</Text>
           </View>
         )}
 
@@ -269,8 +292,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: theme.text,
   },
-  headerPlaceholder: {
+  headerHistoryButton: {
     width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#ECFDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
   },
   profileRow: {
     flexDirection: 'row',

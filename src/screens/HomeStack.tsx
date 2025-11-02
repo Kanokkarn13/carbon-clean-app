@@ -11,10 +11,11 @@ import Dashboard from './Dashboard';
 import RewardScreen from './RewardScreen';
 import RewardDetail from './RewardDetail';
 import RedeemHistoryScreen from './RedeemHistoryScreen';
-import type { Reward } from '../services/rewardService';
-import RecentAct from './RecentAct'; // ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â«ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â²ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â²ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â´ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¡
+import RedeemHistoryDetailScreen from './RedeemHistoryDetailScreen';
+import type { Redemption, Reward } from '../services/rewardService';
+import RecentAct from './RecentAct';
 
-// -------- Activity Types (ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â£ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â²ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¨ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹Ãƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â·ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â­ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¥ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚ÂµÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¹Ãƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ error import ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â§ÃƒÆ’Ã‚Â Ãƒâ€šÃ‚Â¸ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢) --------
+/* -------- Activity Types -------- */
 export type ActivityType = 'Cycling' | 'Walking';
 
 export type Activity = {
@@ -34,7 +35,7 @@ export type Activity = {
   carbon_reduce_g?: number;
 };
 
-// -------- User / Navigation Types --------
+/* -------- User / Navigation Types -------- */
 export type User = {
   user_id?: string | number;
   id?: string | number;
@@ -45,14 +46,39 @@ export type User = {
 
 export type RootStackParamList = {
   Home: { user?: User } | undefined;
+
   Calculation: { user?: User } | undefined;
   EmissonCalculate: { user?: User } | undefined;
   ReduceCalculate: { user?: User } | undefined;
   SetGoal: { user?: User } | undefined;
+
   Dashboard: { user?: User } | undefined;
-  RedeemHistory: { user?: User } | undefined;
+
+  // ✅ ใส่ totalPoints และ activities ให้ RedeemHistory เหมือนหน้า Reward
+  RedeemHistory:
+    | {
+        user?: User;
+        totalPoints?: number;
+      }
+    | undefined;
+
+  RedeemHistoryDetail:
+    | {
+        redemption: Redemption;
+        user?: User;
+      }
+    | undefined;
+
   RecentAct: { activity: Activity } | undefined;
-  Reward: { user?: User; totalPoints?: number; activities?: Activity[] } | undefined;
+
+  Reward:
+    | {
+        user?: User;
+        totalPoints?: number;
+        activities?: Activity[];
+      }
+    | undefined;
+
   RewardDetail:
     | {
         reward: Reward & {
@@ -80,44 +106,23 @@ const HomeStack: React.FC<HomeStackProps> = ({ user }) => {
       </Stack.Screen>
 
       {/* Calculation and goal flows keep user in initial params */}
-      <Stack.Screen
-        name="Calculation"
-        component={Calculation}
-        initialParams={{ user }}
-      />
-      <Stack.Screen
-        name="EmissonCalculate"
-        component={EmissonCalculate}
-        initialParams={{ user }}
-      />
-      <Stack.Screen
-        name="ReduceCalculate"
-        component={ReduceCalculate}
-        initialParams={{ user }}
-      />
-      <Stack.Screen
-        name="SetGoal"
-        component={SetGoalScreen}
-        initialParams={{ user }}
-      />
-      <Stack.Screen
-        name="Dashboard"
-        component={Dashboard}
-        initialParams={{ user }}
-      />
+      <Stack.Screen name="Calculation" component={Calculation} initialParams={{ user }} />
+      <Stack.Screen name="EmissonCalculate" component={EmissonCalculate} initialParams={{ user }} />
+      <Stack.Screen name="ReduceCalculate" component={ReduceCalculate} initialParams={{ user }} />
+      <Stack.Screen name="SetGoal" component={SetGoalScreen} initialParams={{ user }} />
+      <Stack.Screen name="Dashboard" component={Dashboard} initialParams={{ user }} />
 
+      {/* Redeem history flow */}
+      <Stack.Screen name="RedeemHistory" component={RedeemHistoryScreen} initialParams={{ user }} />
       <Stack.Screen
-        name="RedeemHistory"
-        component={RedeemHistoryScreen}
+        name="RedeemHistoryDetail"
+        component={RedeemHistoryDetailScreen}
         initialParams={{ user }}
+        options={{ title: 'Redeem Detail' }}
       />
 
       {/* Reward redemption flow */}
-      <Stack.Screen
-        name="Reward"
-        component={RewardScreen}
-        initialParams={{ user }}
-      />
+      <Stack.Screen name="Reward" component={RewardScreen} initialParams={{ user }} />
       <Stack.Screen name="RewardDetail" component={RewardDetail} />
       <Stack.Screen name="RecentAct" component={RecentAct} />
     </Stack.Navigator>
