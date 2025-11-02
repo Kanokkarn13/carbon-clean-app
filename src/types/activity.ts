@@ -11,6 +11,8 @@ export type ActivityPayload = {
   step_total?: number;
   duration_sec?: number;
   record_date?: string | Date;
+  route_points?: Array<{ latitude: number; longitude: number } | [number, number]> | string;
+  routePoints?: Array<{ latitude: number; longitude: number } | [number, number]> | string;
 
   // à¹€à¸œà¸·à¹ˆà¸­ API à¸­à¸·à¹ˆà¸™ à¹†
   created_at?: string | Date;

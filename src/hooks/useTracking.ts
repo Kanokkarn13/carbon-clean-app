@@ -4,6 +4,8 @@ import { Pedometer } from 'expo-sensors';
 import * as Location from 'expo-location';
 import { calculateDistance } from '../utils/distance';
 
+type LatLng = { latitude: number; longitude: number };
+
 /**
  * ================= Configuration =================
  */
@@ -48,6 +50,7 @@ export const useTracking = () => {
   const [isTracking, setIsTracking] = useState(false);
   const [subscription, setSubscription] = useState<Location.LocationSubscription | null>(null);
   const [updateCount, setUpdateCount] = useState(0);
+  const [routePoints, setRoutePoints] = useState<LatLng[]>([]);
 
   // Last fix (for timing/UI)
   const lastFixRef = useRef<Location.LocationObject | null>(null);
@@ -71,6 +74,30 @@ export const useTracking = () => {
 
   // Watchdog
   const lastMovementAtRef = useRef<number>(0);
+  const routePointsRef = useRef<LatLng[]>([]);
+
+  const MIN_ROUTE_POINT_GAP_METERS = 5;
+
+  const commitRoutePoint = (coords: Location.LocationObjectCoords | null | undefined) => {
+    if (!coords) return;
+    const { latitude, longitude } = coords;
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+    const last = routePointsRef.current[routePointsRef.current.length - 1];
+    if (last) {
+      const dist = calculateDistance(last.latitude, last.longitude, latitude, longitude);
+      if (!Number.isFinite(dist) || dist < MIN_ROUTE_POINT_GAP_METERS) return;
+    }
+
+    const next = [...routePointsRef.current, { latitude, longitude }];
+    routePointsRef.current = next;
+    setRoutePoints(next);
+  };
+
+  const clearRoute = () => {
+    routePointsRef.current = [];
+    setRoutePoints([]);
+  };
 
   /**
    * Time tracking
@@ -269,6 +296,7 @@ export const useTracking = () => {
       setSpeed(Number(clampSpeed(smoothed).toFixed(1)));
       if (deltaMeters > 0) setDistance((prev) => prev + deltaMeters / 1000);
       setUpdateCount((p) => p + 1);
+      commitRoutePoint(newLoc.coords);
     });
   };
 
@@ -284,6 +312,7 @@ export const useTracking = () => {
       setUpdateCount(0);
       setSpeed(0);
       setLocation(null);
+      clearRoute();
 
       lastSmoothedRef.current = 0;
       moveHistory.current = [];
@@ -358,5 +387,7 @@ export const useTracking = () => {
     stopTracking,
     subscription,
     updateCount,
+    routePoints,
+    clearRoute,
   };
 };

@@ -16,11 +16,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE, Region, Polyline } from 'react-native-maps';
 
 import { useTracking } from '../hooks/useTracking';
 import { formatTime, saveActivity, buildSaveEndpoint } from '../utils/trackingHelpers';
 import { computeCarbonReduce } from '../utils/calcCarbon'; // <-- NEW
+import { saveRoutePoints } from '../services/routeStorage';
 
 type Navigation = NativeStackNavigationProp<any>;
 type TrackingScreenProps = { user: any };
@@ -51,8 +52,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
   // zero-out the metrics in UI after saving
   const [uiZero, setUiZero] = useState(false);
 
-  const [mapInteractive, setMapInteractive] = useState(false);
-
   const {
     location,
     speed,
@@ -64,6 +63,8 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
     stopTracking,
     subscription,
     updateCount,
+    routePoints,
+    clearRoute,
   } = useTracking();
 
   const mapRef = useRef<MapView | null>(null);
@@ -172,9 +173,9 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                 toolbarEnabled={false}
                 moveOnMarkerPress={false}
                 onRegionChangeComplete={(r) => setMapRegion(r)}
-                scrollEnabled={mapInteractive}
-                zoomEnabled={mapInteractive}
-                pitchEnabled={mapInteractive}
+                scrollEnabled={false}
+                zoomEnabled={false}
+                pitchEnabled={false}
               >
                 {location?.coords && (
                   <Marker
@@ -183,6 +184,29 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                       longitude: location.coords.longitude,
                     }}
                     title="You are here"
+                  />
+                )}
+                {routePoints.length > 1 && (
+                  <Polyline
+                    coordinates={routePoints}
+                    strokeColor="#2563EB"
+                    strokeWidth={5}
+                    lineCap="round"
+                    lineJoin="round"
+                  />
+                )}
+                {routePoints.length > 0 && (
+                  <Marker
+                    coordinate={routePoints[0]}
+                    pinColor="#10B981"
+                    title="Start"
+                  />
+                )}
+                {routePoints.length > 1 && (
+                  <Marker
+                    coordinate={routePoints[routePoints.length - 1]}
+                    pinColor="#EF4444"
+                    title="Finish"
                   />
                 )}
               </MapView>
@@ -211,21 +235,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                 <Ionicons name="locate-outline" size={18} color={theme.primaryDark} />
               </TouchableOpacity>
 
-              {/* Toggle map pan/lock */}
-              <TouchableOpacity
-                style={[styles.recenterBtn, { top: 52 }]}
-                onPress={() => setMapInteractive((v) => !v)}
-                activeOpacity={0.8}
-              >
-                <Ionicons
-                  name={mapInteractive ? 'hand-left-outline' : 'lock-closed-outline'}
-                  size={18}
-                  color={theme.primaryDark}
-                />
-                <Text style={{ marginLeft: 6, color: theme.primaryDark, fontWeight: '700' }}>
-                  {mapInteractive ? 'Pan map' : 'Scroll mode'}
-                </Text>
-              </TouchableOpacity>
             </View>
 
             {/* Toggle */}
@@ -415,6 +424,12 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                         carbonReduce, // <-- include in initial save
                       };
                       if (goalType === 'walking') payload.step_total = steps;
+                      if (routePoints.length) {
+                        payload.route_points = routePoints.map((p) => ({
+                          latitude: p.latitude,
+                          longitude: p.longitude,
+                        }));
+                      }
 
                       console.log('📤 [Save] endpoint + payload', {
                         saveEndpoint,
@@ -447,6 +462,11 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
 
                         // ZERO OUT the UI now that we’ve saved
                         setUiZero(true);
+
+                        if (activityId && routePoints.length) {
+                          await saveRoutePoints(goalType, activityId, routePoints);
+                        }
+                        clearRoute();
 
                         // Navigate to summary (optional: pass carbonReduce too)
                         const navParams = {

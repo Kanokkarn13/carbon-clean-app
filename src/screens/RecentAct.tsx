@@ -1,8 +1,8 @@
 // src/screens/RecentAct.tsx
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert,
-  Modal, TextInput, KeyboardAvoidingView, Platform, Dimensions
+  Modal, TextInput, KeyboardAvoidingView, Platform, Dimensions, ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,9 +11,18 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from './HomeStack';
 import type { ActivityPayload } from '../types/activity';
 import { evaluateActivityPoints } from '../utils/points';
+import { loadRoutePoints, StoredLatLng } from '../services/routeStorage';
 
+let MapsModule: any = null;
 let MapView: any = null;
-try { MapView = require('react-native-maps').default; } catch {}
+let Marker: any = null;
+let Polyline: any = null;
+try {
+  MapsModule = require('react-native-maps');
+  MapView = MapsModule.default;
+  Marker = MapsModule.Marker;
+  Polyline = MapsModule.Polyline;
+} catch {}
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'RecentAct'>;
 
@@ -47,6 +56,67 @@ const TINTS = {
   teal:  '#ECFEFF',
   yellow:'#FFFBEB',
 };
+
+type MapRegion = { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number };
+
+const DEFAULT_REGION: MapRegion = { latitude: 13.7563, longitude: 100.5018, latitudeDelta: 0.06, longitudeDelta: 0.06 };
+
+function parseRoutePoints(input: unknown): StoredLatLng[] {
+  if (!input) return [];
+  let raw = input;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: StoredLatLng[] = [];
+  raw.forEach((item) => {
+    if (!item) return;
+    if (Array.isArray(item)) {
+      const [lat, lng] = item;
+      const latitude = Number(lat);
+      const longitude = Number(lng);
+      if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        out.push({ latitude, longitude });
+      }
+      return;
+    }
+    const latitude = Number((item as any)?.latitude ?? (item as any)?.lat);
+    const longitude = Number((item as any)?.longitude ?? (item as any)?.lng);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      out.push({ latitude, longitude });
+    }
+  });
+  return out;
+}
+
+function regionFrom(points: StoredLatLng[]): MapRegion {
+  if (!points.length) return DEFAULT_REGION;
+  if (points.length === 1) {
+    return {
+      latitude: points[0].latitude,
+      longitude: points[0].longitude,
+      latitudeDelta: 0.008,
+      longitudeDelta: 0.008,
+    };
+  }
+
+  const lats = points.map((p) => p.latitude);
+  const lngs = points.map((p) => p.longitude);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const latitude = (minLat + maxLat) / 2;
+  const longitude = (minLng + maxLng) / 2;
+  const latDelta = Math.max((maxLat - minLat) * 1.3, 0.005);
+  const lngDelta = Math.max((maxLng - minLng) * 1.3, 0.005);
+
+  return { latitude, longitude, latitudeDelta: latDelta, longitudeDelta: lngDelta };
+}
 
 function fmtNumber(n?: number, digits = 0) {
   if (typeof n !== 'number' || Number.isNaN(n)) return '—';
@@ -111,6 +181,60 @@ const RecentAct: React.FC = () => {
   const id = (activity as any)?.id;
   const title0 = activity?.title || (activity as any)?.type || 'Title';
   const description0 = activity?.description || '';
+
+  const initialRoutePoints = useMemo(
+    () => parseRoutePoints((activity as any)?.route_points ?? (activity as any)?.routePoints),
+    [activity]
+  );
+  const [routePoints, setRoutePoints] = useState<StoredLatLng[]>(initialRoutePoints);
+  const [loadingRoute, setLoadingRoute] = useState(false);
+  const [mapRegion, setMapRegion] = useState<MapRegion>(
+    initialRoutePoints.length ? regionFrom(initialRoutePoints) : DEFAULT_REGION
+  );
+  const mapRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (initialRoutePoints.length) {
+      setRoutePoints(initialRoutePoints);
+      setMapRegion(regionFrom(initialRoutePoints));
+    }
+  }, [initialRoutePoints]);
+
+  useEffect(() => {
+    if (!id || !typeSlug) return;
+    if (routePoints.length) return;
+    let cancelled = false;
+    setLoadingRoute(true);
+    (async () => {
+      const stored = await loadRoutePoints(typeSlug, id);
+      if (!cancelled && stored?.length) {
+        setRoutePoints(stored);
+        setMapRegion(regionFrom(stored));
+      }
+    })()
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoadingRoute(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, typeSlug, routePoints.length]);
+
+  useEffect(() => {
+    if (!routePoints.length) return;
+    const region = regionFrom(routePoints);
+    setMapRegion(region);
+    const fit = mapRef.current?.fitToCoordinates;
+    if (typeof fit === 'function') {
+      try {
+        fit(routePoints, {
+          edgePadding: { top: 40, right: 40, bottom: 40, left: 40 },
+          animated: false,
+        });
+      } catch {}
+    }
+  }, [routePoints]);
 
   const distanceKm = typeof activity?.distance_km === 'number' ? activity.distance_km : toNum((activity as any)?.distance_km);
   const stepTotalNum = typeof activity?.step_total === 'number' ? activity.step_total : toNum((activity as any)?.step_total);
@@ -247,11 +371,54 @@ const RecentAct: React.FC = () => {
         {/* Map */}
         <View style={styles.mapWrap}>
           {MapView ? (
-            <MapView
-              style={StyleSheet.absoluteFill}
-              initialRegion={{ latitude: 13.7563, longitude: 100.5018, latitudeDelta: 0.06, longitudeDelta: 0.06 }}
-              pointerEvents="none"
-            />
+            <>
+              <MapView
+                ref={mapRef}
+                style={StyleSheet.absoluteFill}
+                initialRegion={mapRegion}
+                region={mapRegion}
+                pointerEvents="none"
+              >
+                {Polyline && routePoints.length > 1 ? (
+                  <Polyline
+                    coordinates={routePoints}
+                    strokeColor="#2563EB"
+                    strokeWidth={5}
+                    lineCap="round"
+                    lineJoin="round"
+                  />
+                ) : null}
+                {Marker && routePoints.length > 0 ? (
+                  <Marker
+                    coordinate={routePoints[0]}
+                    pinColor="#10B981"
+                    title="Start"
+                  />
+                ) : null}
+                {Marker && routePoints.length > 1 ? (
+                  <Marker
+                    coordinate={routePoints[routePoints.length - 1]}
+                    pinColor="#EF4444"
+                    title="Finish"
+                  />
+                ) : null}
+              </MapView>
+              {!routePoints.length && (
+                <View style={[StyleSheet.absoluteFill, styles.mapPlaceholder]}>
+                  {loadingRoute ? (
+                    <>
+                      <ActivityIndicator color={theme.primary} />
+                      <Text style={{ color: theme.sub, marginTop: 6 }}>Loading route…</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="map" size={28} color={theme.sub} />
+                      <Text style={{ color: theme.sub, marginTop: 6 }}>No route captured</Text>
+                    </>
+                  )}
+                </View>
+              )}
+            </>
           ) : (
             <View style={[StyleSheet.absoluteFill, styles.mapPlaceholder]}>
               <Ionicons name="map" size={28} color={theme.sub} />
