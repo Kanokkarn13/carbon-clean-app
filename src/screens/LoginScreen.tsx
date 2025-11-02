@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { login } from '../services/authService';
+import { login, saveUser } from '../services/authService';
 
 type LoginScreenProps = {
   navigation: any;
@@ -25,6 +25,7 @@ type AuthResponse = {
   message?: string;
   data?: any;    // backend sends user in data
   user?: any;    // fallback if backend sends user directly
+  token?: string;
 };
 
 const theme = {
@@ -65,13 +66,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation, onLoginSuccess })
         throw new Error(res.message || 'Malformed login response');
       }
 
-      const fullName =
-        (apiUser.fname || apiUser.lname)
-          ? `${apiUser.fname ?? ''} ${apiUser.lname ?? ''}`.trim()
-          : 'Welcome';
-
-      Alert.alert('Welcome', fullName);
-
+      await saveUser(apiUser, res.token);
+      setErr(null);
       onLoginSuccess(apiUser);
       navigation.replace('Main');
     } catch (e: unknown) {

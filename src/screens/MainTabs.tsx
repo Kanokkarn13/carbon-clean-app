@@ -8,9 +8,9 @@ import ProfileStack from './ProfileStack'; //
 
 const Tab = createBottomTabNavigator();
 
-type MainTabsProps = { user: any };
+type MainTabsProps = { user: any; onLogout: () => void };
 
-const MainTabs: React.FC<MainTabsProps> = ({ user }) => {
+const MainTabs: React.FC<MainTabsProps> = ({ user, onLogout }) => {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -53,7 +53,7 @@ const MainTabs: React.FC<MainTabsProps> = ({ user }) => {
       <Tab.Screen
         name="Profile"
         component={ProfileStack}
-        initialParams={{ user }} 
+        initialParams={{ user, onLogout }} 
         options={{ title: 'Profile' }}
       />
     </Tab.Navigator>

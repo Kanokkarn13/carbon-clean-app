@@ -25,7 +25,7 @@ import { CommonActions } from "@react-navigation/native";
 // ---------- Types ----------
 type Navigation = NativeStackNavigationProp<any>;
 type ProfileStackParamList = {
-  ProfileMain: { user: any } | undefined;
+  ProfileMain: { user: any; onLogout?: () => void } | undefined;
   ProfileEdit: { user: any } | undefined;
 };
 
@@ -84,6 +84,7 @@ export default function ProfileScreen() {
   const navigation = useNavigation<Navigation>();
   const route = useRoute<RouteProp<ProfileStackParamList, "ProfileMain">>();
   const routeUser = route.params?.user ?? null;
+  const logoutCb = route.params?.onLogout;
 
   const [user, setUser] = useState<any | null>(routeUser);
   const [loading, setLoading] = useState(true);
@@ -141,6 +142,7 @@ export default function ProfileScreen() {
           } catch (err) {
             console.error("Logout failed:", err);
           }
+          logoutCb?.();
           const parent = navigation.getParent();
           const root = parent?.getParent();
           const action = CommonActions.reset({
@@ -153,7 +155,7 @@ export default function ProfileScreen() {
         },
       },
     ]);
-  }, [navigation]);
+  }, [navigation, logoutCb]);
 
   const {
     totalWalkKm,

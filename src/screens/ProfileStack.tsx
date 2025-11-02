@@ -6,14 +6,15 @@ import ProfileEdit from './ProfileEdit';
 const Stack = createNativeStackNavigator();
 
 export default function ProfileStack({ route }: any) {
-  const user = route?.params?.user ?? null; // ✅ safe access
+  const user = route?.params?.user ?? null; // safe access
+  const onLogout = route?.params?.onLogout;
 
   return (
     <Stack.Navigator>
       <Stack.Screen
         name="ProfileMain"
         component={ProfileScreen}
-        initialParams={{ user }} // ✅ ensures ProfileScreen always has user
+        initialParams={{ user, onLogout }} // ensures ProfileScreen always has user and logout handler
         options={{ headerShown: false }}
       />
       <Stack.Screen

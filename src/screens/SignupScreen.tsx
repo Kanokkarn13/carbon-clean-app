@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { register } from '../services/authService';
+import { register, saveUser } from '../services/authService';
 
 type SignupScreenProps = {
   navigation: any;
@@ -25,6 +25,7 @@ type AuthResponse = {
   message?: string;
   data?: any;   // backend returns user in data (per controller)
   user?: any;   // fallback if some envs return user here
+  token?: string;
 };
 
 const theme = {
@@ -110,6 +111,8 @@ const SignupScreen: React.FC<SignupScreenProps> = ({ navigation, onSignupSuccess
         navigation.replace('Login');
         return;
       }
+
+      await saveUser(apiUser, res.token);
 
       const fullName =
         (apiUser.fname || apiUser.lname)
