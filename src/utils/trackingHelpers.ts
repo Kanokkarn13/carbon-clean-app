@@ -32,7 +32,6 @@ function resolveBase(): string {
 /** ✅ Reusable function to build save endpoints */
 export function buildSaveEndpoint(goalType: 'walking' | 'cycling', base = resolveBase()) {
   const url = `${base}/api/${goalType === 'walking' ? 'save-walking' : 'save-cycling'}`;
-  console.log('[buildSaveEndpoint]', { goalType, url });
   return url;
 }
 

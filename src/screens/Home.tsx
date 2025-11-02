@@ -572,13 +572,13 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
           <TouchableOpacity
             style={styles.quickCard}
-            onPress={() => (navigation as any).navigate('SetGoal', { user })}
+            onPress={() => (navigation as any).navigate('RedeemHistory', { user })}
             activeOpacity={0.9}
           >
             <View style={styles.quickIcon}>
-              <Ionicons name="leaf-outline" size={20} color={theme.primaryDark} />
+              <Ionicons name="gift-outline" size={20} color={theme.primaryDark} />
             </View>
-            <Text style={styles.quickLabel}>Goals</Text>
+            <Text style={styles.quickLabel}>Redeem History</Text>
           </TouchableOpacity>
         </View>
 

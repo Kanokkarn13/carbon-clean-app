@@ -12,10 +12,9 @@ type LatLng = { latitude: number; longitude: number };
 
 // Caps / windows
 const MAX_SPEED = 150;                 // km/h hard cap
-const NO_MOVE_TIMEOUT_MS = 3000;       // force speed->0 if stale
-const STATIONARY_SPEED_KMH = 0.8;
-const STATIONARY_WINDOW = 8;           // samples for stationary judge
-const STATIONARY_MOVE_SUM = 6;         // meters within window
+const STATIONARY_SPEED_KMH = 0.5;
+const STATIONARY_WINDOW = 10;          // samples for stationary judge
+const STATIONARY_MOVE_SUM = 12;        // meters within window
 
 // Indoor/outdoor heuristics
 const BASE_MAX_ACCURACY = 50;          // m (outdoor target)
@@ -24,6 +23,10 @@ const INDOOR_MAX_ACCURACY = 80;        // m (indoor-relaxed)
 // stride & step speed window
 const STRIDE_M = 0.72;                 // TODO: read from user profile for best accuracy
 const STEP_SPEED_WINDOW_SEC = 8;       // seconds
+
+// Idle grace windows
+const NO_MOVE_TIMEOUT_MS = 6000;       // decay trigger (was 3000)
+const STOP_DECAY_WINDOW_MS = 4000;     // fade-out duration to zero after timeout
 
 /**
  * ============== Helper types / utils ==============
@@ -73,8 +76,10 @@ export const useTracking = () => {
   const pedoSubRef = useRef<Pedometer.Subscription | null>(null);
 
   // Watchdog
-  const lastMovementAtRef = useRef<number>(0);
+  const lastMovementAtRef = useRef<number | null>(null);
   const routePointsRef = useRef<LatLng[]>([]);
+  const startTimestampRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const MIN_ROUTE_POINT_GAP_METERS = 5;
 
@@ -99,13 +104,34 @@ export const useTracking = () => {
     setRoutePoints([]);
   };
 
+  const updateElapsedTime = () => {
+    if (startTimestampRef.current == null) return;
+    const elapsedMs = Date.now() - startTimestampRef.current;
+    const elapsedSec = Math.max(0, Math.floor(elapsedMs / 1000));
+    setTime(elapsedSec);
+  };
+
   /**
-   * Time tracking
+   * Time tracking (foreground + catch-up when returning from background)
    */
   useEffect(() => {
-    let h: ReturnType<typeof setInterval> | null = null;
-    if (isTracking) h = setInterval(() => setTime((p) => p + 1), 1000);
-    return () => { if (h) clearInterval(h); };
+    if (!isTracking) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
+
+    updateElapsedTime();
+    timerRef.current = setInterval(updateElapsedTime, 1000);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
   }, [isTracking]);
 
   /**
@@ -285,8 +311,19 @@ export const useTracking = () => {
     let smoothed = ALPHA * (spdKmh || 0) + (1 - ALPHA) * (lastSmoothedRef.current || 0);
 
     // decay to zero if nothing moved recently
-    if (!lastMovementAtRef.current || now - lastMovementAtRef.current > NO_MOVE_TIMEOUT_MS) {
+    if (!lastMovementAtRef.current) {
       smoothed = 0;
+    } else {
+      const lastMoveTs = lastMovementAtRef.current;
+      const idleMs = now - lastMoveTs;
+      if (idleMs > NO_MOVE_TIMEOUT_MS) {
+        if (STOP_DECAY_WINDOW_MS <= 0) {
+          smoothed = 0;
+        } else {
+          const decayRatio = Math.min(1, (idleMs - NO_MOVE_TIMEOUT_MS) / STOP_DECAY_WINDOW_MS);
+          smoothed = Math.max(0, smoothed * (1 - decayRatio));
+        }
+      }
     }
     lastSmoothedRef.current = smoothed;
 
@@ -297,6 +334,7 @@ export const useTracking = () => {
       if (deltaMeters > 0) setDistance((prev) => prev + deltaMeters / 1000);
       setUpdateCount((p) => p + 1);
       commitRoutePoint(newLoc.coords);
+      updateElapsedTime();
     });
   };
 
@@ -313,6 +351,8 @@ export const useTracking = () => {
       setSpeed(0);
       setLocation(null);
       clearRoute();
+      const startNow = Date.now();
+      startTimestampRef.current = startNow;
 
       lastSmoothedRef.current = 0;
       moveHistory.current = [];
@@ -325,7 +365,7 @@ export const useTracking = () => {
 
       prevStepsRef.current = 0;
       stepWindowRef.current = [];
-      lastMovementAtRef.current = 0;
+      lastMovementAtRef.current = startNow;
 
       // permissions
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -361,6 +401,7 @@ export const useTracking = () => {
     setSpeed(0);
     setLocation(null);
     setUpdateCount(0);
+    updateElapsedTime();
 
     lastSmoothedRef.current = 0;
     moveHistory.current = [];
@@ -373,7 +414,12 @@ export const useTracking = () => {
 
     prevStepsRef.current = 0;
     stepWindowRef.current = [];
-    lastMovementAtRef.current = 0;
+    lastMovementAtRef.current = null;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    startTimestampRef.current = null;
   };
 
   return {
