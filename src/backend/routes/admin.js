@@ -336,4 +336,140 @@ router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) =
   }
 });
 
+// ---------------------- NEW: dropdown รายชื่อผู้ใช้แบบเบา ----------------------
+router.get('/users/min', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT user_id, CONCAT(fname, ' ', lname) AS name, email
+      FROM users
+      ORDER BY user_id DESC
+      LIMIT 1000
+    `);
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('GET /admin/users/min error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+// ---------------------- NEW: Activity Explorer (รวม walk + bike) ----------------------
+router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    // query params: user_id (required), type: 'all'|'walk'|'bike', date_from, date_to, limit, offset
+    const userId = Number(req.query.user_id);
+    const type = (req.query.type || 'all').toString().toLowerCase(); // all | walk | bike
+    const dateFrom = req.query.date_from ? new Date(req.query.date_from) : null;
+    const dateTo   = req.query.date_to   ? new Date(req.query.date_to)   : null;
+    const limit  = Math.min(Math.max(Number(req.query.limit) || 20, 1), 200);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ message: 'user_id is required' });
+    }
+
+    // สร้างเงื่อนไขวันที่แบบยืดหยุ่น
+    const walkConds = ['w.user_id = ?'];
+    const bikeConds = ['b.user_id = ?'];
+    const paramsWalk = [userId];
+    const paramsBike = [userId];
+
+    if (dateFrom) {
+      walkConds.push('w.record_date >= ?');
+      bikeConds.push('b.record_date >= ?');
+      paramsWalk.push(dateFrom);
+      paramsBike.push(dateFrom);
+    }
+    if (dateTo) {
+      walkConds.push('w.record_date <= ?');
+      bikeConds.push('b.record_date <= ?');
+      paramsWalk.push(dateTo);
+      paramsBike.push(dateTo);
+    }
+
+    // แต่ละ SELECT ให้ column เดียวกัน เพื่อ UNION ได้ง่าย
+    const walkSql = `
+      SELECT
+        'walk' AS type,
+        w.id,
+        w.record_date,
+        w.distance_km,
+        w.carbonReduce,
+        w.duration_sec,
+        w.step_total,
+        NULL AS title_bike,
+        w.title AS title,
+        w.description AS description
+      FROM walk_history w
+      WHERE ${walkConds.join(' AND ')}
+    `;
+
+    const bikeSql = `
+      SELECT
+        'bike' AS type,
+        b.id,
+        b.record_date,
+        b.distance_km,
+        b.carbonReduce,
+        b.duration_sec,
+        NULL AS step_total,
+        b.title AS title_bike,
+        b.title AS title,
+        b.description AS description
+      FROM bic_history b
+      WHERE ${bikeConds.join(' AND ')}
+    `;
+
+    // เลือก type
+    let unionSql = '';
+    let unionParams = [];
+    if (type === 'walk') {
+      unionSql = walkSql;
+      unionParams = paramsWalk;
+    } else if (type === 'bike') {
+      unionSql = bikeSql;
+      unionParams = paramsBike;
+    } else {
+      // all
+      unionSql = `${walkSql} UNION ALL ${bikeSql}`;
+      unionParams = [...paramsWalk, ...paramsBike];
+    }
+
+    // ต้อง wrap แล้ว ORDER BY + LIMIT ให้ทั้งกอง
+    const finalSql = `
+      SELECT *
+      FROM (
+        ${unionSql}
+      ) t
+      ORDER BY t.record_date DESC
+      LIMIT ? OFFSET ?
+    `;
+
+    const [rows] = await db.query(finalSql, [...unionParams, limit, offset]);
+
+    // แยกนับรวมหมด (เพื่อ pagination)
+    const countSql = `
+      SELECT COUNT(*) AS total FROM (
+        ${unionSql}
+      ) x
+    `;
+    const [countRows] = await db.query(countSql, unionParams);
+    const total = Number(countRows?.[0]?.total || 0);
+
+    res.json({
+      success: true,
+      data: rows.map(r => ({
+        ...r,
+        distance_km: r.distance_km == null ? null : Number(r.distance_km),
+        carbonReduce: r.carbonReduce == null ? null : Number(r.carbonReduce),
+        duration_sec: r.duration_sec == null ? null : Number(r.duration_sec),
+        step_total: r.step_total == null ? null : Number(r.step_total),
+      })),
+      pagination: { total, limit, offset }
+    });
+  } catch (err) {
+    console.error('GET /admin/activity error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
 module.exports = router;
