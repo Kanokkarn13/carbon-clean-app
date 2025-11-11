@@ -3,10 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "start": "node src/backend/index.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
@@ -18,8 +15,9 @@
     "axios": "^1.9.0",
     "bcrypt": "^5.1.1",
     "bcryptjs": "^3.0.2",
+    "body-parser": "^2.2.0",
     "cors": "^2.8.5",
-    "dotenv": "^16.5.0",
+    "dotenv": "^16.6.1",
     "expo": "^54.0.7",
     "expo-font": "~14.0.8",
     "expo-location": "~19.0.7",
@@ -28,7 +26,7 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
-    "mysql2": "^3.14.1",
+    "mysql2": "^3.15.3",
     "react": "19.1.0",
     "react-native": "0.81.4",
     "react-native-chart-kit": "^6.12.0",
@@ -46,6 +44,9 @@
   "devDependencies": {
     "@babel/core": "^7.20.0",
     "babel-preset-expo": "^54.0.1"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "private": true
 }

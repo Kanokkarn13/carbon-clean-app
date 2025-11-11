@@ -1,7 +1,8 @@
+require('dotenv').config(); // ✅ โหลดตัวแปรจาก .env
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const path = require('path');                // ✅ ใช้สำหรับ resolve path
+const path = require('path');
 const db = require('./config/db');
 const authController = require('./controllers/authController');
 const { saveWalking } = require('./controllers/saveWalkingController');
@@ -9,58 +10,75 @@ const { saveCycling } = require('./controllers/saveCyclingController');
 const activityRoutes = require('./routes/activityRoutes');
 const adminRoutes = require('./routes/admin');
 const blogRoutes = require('./routes/blogs');
-   
 
 const app = express();
 
-/* ✅ 1.2 เปิด static path สำหรับรูปอัปโหลด (เช่น cover / รูปในเนื้อหา blog)
-   รูปที่อยู่ใน uploads/blogs/... จะเข้าได้จาก URL http://localhost:3000/uploads/blogs/filename.jpg
+/* ✅ Static Path สำหรับไฟล์อัปโหลด (เช่น cover blog)
+   ตัวอย่าง: https://backend.onrender.com/uploads/blogs/image.jpg
 */
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// --- Middleware ---
+// ✅ Middleware
 app.use(bodyParser.json());
-app.use(cors());
+
+// ✅ CORS — อ่าน allowed origins จาก env
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return cb(null, true);
+    console.warn('❌ Blocked CORS Origin:', origin);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
+
+// ✅ Debug log สั้นๆ
 app.use((req, res, next) => {
-  console.log(`📥 Incoming ${req.method} request to ${req.url}`);
+  console.log(`📥 ${req.method} ${req.url} from ${req.headers.origin || 'unknown origin'}`);
   next();
 });
 
-// --- ตรวจสอบการเชื่อมต่อฐานข้อมูล ---
+// ✅ ทดสอบการเชื่อมต่อฐานข้อมูล
 (async () => {
   try {
     await db.query('SELECT 1');
-    console.log('✅ Connected to DB');
+    console.log('✅ Connected to MySQL DB');
   } catch (err) {
-    console.error('❌ Failed to connect to DB:', err);
+    console.error('❌ DB connection failed:', err);
   }
 })();
 
-// --- Auth Routes ---
+// ✅ Health Check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// ✅ Auth routes
 app.post('/api/check-user', authController.login);
 app.post('/api/register', authController.register);
 app.post('/api/update-user', authController.updateUser);
 app.post('/api/set-goal', authController.setGoal);
 
-// --- Save Activity ---
+// ✅ Save activity routes
 app.post('/api/save-walking', saveWalking);
 app.post('/api/save-cycling', saveCycling);
 
-// --- Admin Routes (รวมข้อ 1.4 ที่นี่) ---
+// ✅ Admin + Blog routes
 app.use('/api/admin', adminRoutes);
-app.use('/api/admin', blogRoutes); // ✅ ข้อ 1.4 mount blogRoutes
+app.use('/api/admin', blogRoutes);
 
-// --- Activity Routes (อ่านกิจกรรม) ---
+// ✅ Activity routes
 app.use('/api', activityRoutes);
 
-// --- Default route ---
+// ✅ Default root
 app.get('/', (req, res) => {
-  res.send('🌐 Server is up and running!');
+  res.send('🌐 CarbonClean API is running successfully!');
 });
 
-// --- Start server ---
-const PORT = 3000;
+// ✅ Port & Host สำหรับ Render / local
+const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
+
 app.listen(PORT, HOST, () => {
-  console.log(`🚀 Server is running on http://${HOST}:${PORT}`);
+  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
 });
