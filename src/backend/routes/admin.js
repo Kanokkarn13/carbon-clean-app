@@ -1,10 +1,9 @@
-// routes/admin.js
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 
-/* Utility */
+/* ---------------------- helpers ---------------------- */
 function buildUpdateSet(allowed, payload) {
   const keys = [];
   const vals = [];
@@ -16,10 +15,29 @@ function buildUpdateSet(allowed, payload) {
   }
   return { setSql: keys.join(', '), values: vals };
 }
-const normalizeUsers = (rows) =>
-  rows.map(r => ({ ...r, status: Number(r.status) }));
+function normalizeUsers(rows) {
+  return rows.map((r) => ({ ...r, status: Number(r.status) }));
+}
 
-/* ---------- Users (เหมือนเดิม) ---------- */
+function pickTable(type) {
+  // map type -> table and nice label
+  if (type === 'bike' || type === 'bic' || type === 'bicycle') {
+    return { table: 'bic_history', label: 'bike' };
+  }
+  return { table: 'walk_history', label: 'walk' }; // default
+}
+function parseWindowToSql(windowStr) {
+  // returns SQL condition on record_date
+  // '7d','30d','90d','all' (default 30d)
+  const w = String(windowStr || '').toLowerCase();
+  if (w === '7d') return "record_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+  if (w === '90d') return "record_date >= DATE_SUB(NOW(), INTERVAL 90 DAY)";
+  if (w === 'all') return "1=1";
+  // default 30d
+  return "record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+}
+
+/* ====================== Users APIs ====================== */
 router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -39,12 +57,36 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// 🔹 Minimal user list for selectors: /admin/users/min
+router.get('/users/min', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT user_id, fname, lname, email
+      FROM users
+      ORDER BY user_id DESC
+      LIMIT 1000
+    `);
+    const data = rows.map(r => ({
+      user_id: r.user_id,
+      name: [r.fname, r.lname].filter(Boolean).join(' ') || r.email || `user_${r.user_id}`,
+      email: r.email
+    }));
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('GET /admin/users/min error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
 router.put('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const payload = { ...req.body };
+    const allowed = [
+      'fname', 'lname', 'phone', 'role', 'vehicle',
+      'profile_pic_url', 'bic_goal', 'walk_goal', 'house_member', 'status'
+    ];
 
-    // sanitize
+    const payload = { ...req.body };
     if (payload.status !== undefined) payload.status = Number(payload.status) ? 1 : 0;
     if (payload.phone !== undefined) payload.phone = String(payload.phone).slice(0, 10);
     if (payload.role !== undefined) payload.role = String(payload.role).slice(0, 5);
@@ -54,10 +96,6 @@ router.put('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
     if (payload.walk_goal !== undefined) payload.walk_goal = payload.walk_goal === '' ? null : Number(payload.walk_goal);
     if (payload.house_member !== undefined) payload.house_member = payload.house_member === '' ? null : Number(payload.house_member);
 
-    const allowed = [
-      'fname','lname','phone','role','vehicle',
-      'profile_pic_url','bic_goal','walk_goal','house_member','status'
-    ];
     const { setSql, values } = buildUpdateSet(allowed, payload);
     if (!setSql) return res.status(400).json({ message: 'No valid fields to update' });
 
@@ -91,7 +129,6 @@ router.patch('/users/:id/block', verifyToken, verifyAdmin, async (req, res) => {
     res.status(500).json({ message: 'DB error' });
   }
 });
-
 router.patch('/users/:id/unblock', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -102,7 +139,6 @@ router.patch('/users/:id/unblock', verifyToken, verifyAdmin, async (req, res) =>
     res.status(500).json({ message: 'DB error' });
   }
 });
-
 router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -114,10 +150,9 @@ router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ---------- SUMMARY หลัก (เพิ่มกิจกรรม/คาร์บอน) ---------- */
+/* ====================== Summary API ====================== */
 router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    // Users – overview
     const [overviewRows] = await db.query(`
       SELECT
         COUNT(*) AS total_users,
@@ -130,9 +165,7 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
         COUNT(CASE WHEN created_at >= (CURRENT_DATE - INTERVAL 7 DAY) THEN 1 END) AS new_7d
       FROM users
     `);
-    const ov = overviewRows[0] || {};
-
-    // Users – monthly signups
+    const overview = overviewRows[0] || {};
     const [monthlyRows] = await db.query(`
       SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym, COUNT(*) AS users
       FROM users
@@ -140,18 +173,12 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
       GROUP BY ym
       ORDER BY ym
     `);
-
-    // Users – status breakdown / role breakdown / vehicle
     const [statusRows] = await db.query(`
       SELECT CAST(status AS UNSIGNED) AS status, COUNT(*) AS cnt
       FROM users
       GROUP BY CAST(status AS UNSIGNED)
     `);
-    const [roleRows] = await db.query(`
-      SELECT role, COUNT(*) AS cnt
-      FROM users
-      GROUP BY role
-    `);
+    const [roleRows] = await db.query(`SELECT role, COUNT(*) AS cnt FROM users GROUP BY role`);
     const [vehicleRows] = await db.query(`
       SELECT COALESCE(NULLIF(TRIM(vehicle), ''), '(none)') AS vehicle, COUNT(*) AS cnt
       FROM users
@@ -160,80 +187,23 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
       LIMIT 8
     `);
 
-    // Activities – totals/averages/pace
-    const [actTotals] = await db.query(`
-      SELECT
-        -- count
-        (SELECT COUNT(*) FROM walk_history) AS walk_count,
-        (SELECT COUNT(*) FROM bic_history ) AS bike_count,
-        -- distance all
-        COALESCE((SELECT SUM(distance_km) FROM walk_history),0) AS walk_km_all,
-        COALESCE((SELECT SUM(distance_km) FROM bic_history ),0) AS bike_km_all,
-        -- distance this month
-        COALESCE((SELECT SUM(distance_km) FROM walk_history WHERE record_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0) AS walk_km_month,
-        COALESCE((SELECT SUM(distance_km) FROM bic_history  WHERE record_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0) AS bike_km_month,
-        -- avg distance per activity
-        COALESCE((SELECT AVG(distance_km) FROM walk_history),0) AS walk_avg_km,
-        COALESCE((SELECT AVG(distance_km) FROM bic_history ),0) AS bike_avg_km,
-        -- avg pace km/h
-        COALESCE((SELECT AVG(distance_km / NULLIF(duration_sec,0) * 3600) FROM walk_history),0) AS walk_avg_pace_kmh,
-        COALESCE((SELECT AVG(distance_km / NULLIF(duration_sec,0) * 3600) FROM bic_history ),0) AS bike_avg_pace_kmh,
-        -- carbon totals
-        COALESCE((SELECT SUM(carbonReduce) FROM walk_history),0) AS walk_carbon_all,
-        COALESCE((SELECT SUM(carbonReduce) FROM bic_history ),0) AS bike_carbon_all,
-        COALESCE((SELECT SUM(carbonReduce) FROM walk_history WHERE record_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0) AS walk_carbon_month,
-        COALESCE((SELECT SUM(carbonReduce) FROM bic_history  WHERE record_date >= DATE_FORMAT(CURDATE(),'%Y-%m-01')),0) AS bike_carbon_month
-    `);
-
-    // Activities – active users 7/30 วัน
-    const [active7Rows] = await db.query(`
-      SELECT COUNT(DISTINCT user_id) AS active7
-      FROM (
-        SELECT user_id FROM walk_history WHERE record_date >= NOW() - INTERVAL 7 DAY
-        UNION ALL
-        SELECT user_id FROM bic_history  WHERE record_date >= NOW() - INTERVAL 7 DAY
-      ) t
-    `);
-    const [active30Rows] = await db.query(`
-      SELECT COUNT(DISTINCT user_id) AS active30
-      FROM (
-        SELECT user_id FROM walk_history WHERE record_date >= NOW() - INTERVAL 30 DAY
-        UNION ALL
-        SELECT user_id FROM bic_history  WHERE record_date >= NOW() - INTERVAL 30 DAY
-      ) t
-    `);
-
     res.json({
       success: true,
       data: {
         overview: {
-          total_users: Number(ov.total_users) || 0,
-          active_users: Number(ov.active_users) || 0,
-          blocked_users: Number(ov.blocked_users) || 0,
-          admins: Number(ov.admins) || 0,
-          new_7d: Number(ov.new_7d) || 0,
-          avg_household: ov.avg_household == null ? null : Number(ov.avg_household),
-          avg_walk_goal: ov.avg_walk_goal == null ? null : Number(ov.avg_walk_goal),
-          avg_bic_goal: ov.avg_bic_goal == null ? null : Number(ov.avg_bic_goal),
+          total_users: Number(overview.total_users) || 0,
+          active_users: Number(overview.active_users) || 0,
+          blocked_users: Number(overview.blocked_users) || 0,
+          admins: Number(overview.admins) || 0,
+          new_7d: Number(overview.new_7d) || 0,
+          avg_household: overview.avg_household == null ? null : Number(overview.avg_household),
+          avg_walk_goal: overview.avg_walk_goal == null ? null : Number(overview.avg_walk_goal),
+          avg_bic_goal: overview.avg_bic_goal == null ? null : Number(overview.avg_bic_goal),
         },
         monthly_signups: monthlyRows.map(r => ({ month: r.ym, users: Number(r.users) })),
         status_breakdown: statusRows.map(r => ({ status: Number(r.status), count: Number(r.cnt) })),
         role_breakdown: roleRows.map(r => ({ role: r.role || '(unknown)', count: Number(r.cnt) })),
         vehicle_distribution: vehicleRows.map(r => ({ vehicle: r.vehicle, count: Number(r.cnt) })),
-        activity: {
-          walk_count: Number(actTotals[0].walk_count) || 0,
-          bike_count: Number(actTotals[0].bike_count) || 0,
-          total_km_all: Number(actTotals[0].walk_km_all) + Number(actTotals[0].bike_km_all),
-          total_km_month: Number(actTotals[0].walk_km_month) + Number(actTotals[0].bike_km_month),
-          walk_avg_km: Number(actTotals[0].walk_avg_km) || 0,
-          bike_avg_km: Number(actTotals[0].bike_avg_km) || 0,
-          walk_avg_pace_kmh: Number(actTotals[0].walk_avg_pace_kmh) || 0,
-          bike_avg_pace_kmh: Number(actTotals[0].bike_avg_pace_kmh) || 0,
-          carbon_total_all: Number(actTotals[0].walk_carbon_all) + Number(actTotals[0].bike_carbon_all),
-          carbon_total_month: Number(actTotals[0].walk_carbon_month) + Number(actTotals[0].bike_carbon_month),
-          active7: Number(active7Rows[0].active7) || 0,
-          active30: Number(active30Rows[0].active30) || 0,
-        }
       }
     });
   } catch (err) {
@@ -242,233 +212,252 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ---------- Insights (กราฟ/ตาราง) ---------- */
+/* ====================== Insights APIs (NEW) ====================== */
+/**
+ * GET /admin/insights/hourly?type=walk|bike
+ * กลุ่มจำนวนกิจกรรมตามชั่วโมง (0-23)
+ */
 router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const type = (req.query.type || 'walk').toString().toLowerCase(); // walk | bike
-    const table = type === 'bike' || type === 'bic' ? 'bic_history' : 'walk_history';
+    const { type = 'walk' } = req.query;
+    const { table } = pickTable(String(type).toLowerCase());
+
     const [rows] = await db.query(`
-      SELECT HOUR(record_date) AS hour_of_day, COUNT(*) AS cnt
+      SELECT HOUR(record_date) AS h, COUNT(*) AS cnt
       FROM ${table}
       GROUP BY HOUR(record_date)
-      ORDER BY hour_of_day
+      ORDER BY h
     `);
-    res.json({ success: true, data: rows.map(r => ({ hour: Number(r.hour_of_day), count: Number(r.cnt) })) });
+    const data = Array.from({ length: 24 }, (_, h) => {
+      const r = rows.find(x => Number(x.h) === h);
+      return { hour: h, count: r ? Number(r.cnt) : 0 };
+    });
+    res.json({ success: true, data });
   } catch (err) {
     console.error('GET /admin/insights/hourly error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
 
+/**
+ * GET /admin/insights/weekday?type=walk|bike
+ * กลุ่มจำนวนกิจกรรมตามวันในสัปดาห์ (0-6) อา=0 … ส=6
+ */
 router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const type = (req.query.type || 'walk').toString().toLowerCase();
-    const table = type === 'bike' || type === 'bic' ? 'bic_history' : 'walk_history';
-    // 1=Sunday (MySQL) → map เป็นชื่อวัน
+    const { type = 'walk' } = req.query;
+    const { table } = pickTable(String(type).toLowerCase());
+
     const [rows] = await db.query(`
-      SELECT DAYOFWEEK(record_date) AS dow, COUNT(*) AS cnt
+      SELECT DAYOFWEEK(record_date) - 1 AS wd, COUNT(*) AS cnt
       FROM ${table}
-      GROUP BY DAYOFWEEK(record_date)
-      ORDER BY dow
+      GROUP BY DAYOFWEEK(record_date) - 1
+      ORDER BY wd
     `);
-    res.json({
-      success: true,
-      data: rows.map(r => ({ dow: Number(r.dow), count: Number(r.cnt) }))
+    const data = Array.from({ length: 7 }, (_, wd) => {
+      const r = rows.find(x => Number(x.wd) === wd);
+      return { weekday: wd, count: r ? Number(r.cnt) : 0 };
     });
+    res.json({ success: true, data });
   } catch (err) {
     console.error('GET /admin/insights/weekday error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
 
+/**
+ * GET /admin/insights/distance_hist?type=walk|bike
+ * ฮิสโตแกรมระยะทาง (bin size 1 กม. 0–1,1–2,..., >=20 รวมเป็น 20+)
+ */
 router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const type = (req.query.type || 'walk').toString().toLowerCase();
-    const table = type === 'bike' || type === 'bic' ? 'bic_history' : 'walk_history';
+    const { type = 'walk' } = req.query;
+    const { table } = pickTable(String(type).toLowerCase());
+
     const [rows] = await db.query(`
-      SELECT FLOOR(distance_km) AS bin_km, COUNT(*) AS cnt
+      SELECT
+        CASE
+          WHEN distance_km >= 20 THEN 20
+          ELSE FLOOR(distance_km)
+        END AS bin,
+        COUNT(*) AS cnt
       FROM ${table}
-      GROUP BY FLOOR(distance_km)
-      ORDER BY bin_km
-      LIMIT 50
+      WHERE distance_km IS NOT NULL
+      GROUP BY bin
+      ORDER BY bin
     `);
-    res.json({ success: true, data: rows.map(r => ({ bin: Number(r.bin_km), count: Number(r.cnt) })) });
+    // bins 0..20 (20 = 20+)
+    const data = Array.from({ length: 21 }, (_, b) => {
+      const r = rows.find(x => Number(x.bin) === b);
+      return { bin: b, label: b === 20 ? '20+' : `${b}-${b+1}`, count: r ? Number(r.cnt) : 0 };
+    });
+    res.json({ success: true, data });
   } catch (err) {
     console.error('GET /admin/insights/distance_hist error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
 
+/**
+ * GET /admin/insights/leaderboard?window=7d|30d|90d|all&metric=carbon|distance
+ * สรุป top ผู้ใช้ตาม metric ในช่วงเวลาที่กำหนด
+ */
 router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const window = (req.query.window || '30d').toString().toLowerCase(); // 7d|30d|90d
-    const metric = (req.query.metric || 'carbon').toString().toLowerCase(); // carbon|distance
-    const days = window === '7d' ? 7 : window === '90d' ? 90 : 30;
+    const windowStr = String(req.query.window || '30d').toLowerCase();
+    const metric = String(req.query.metric || 'carbon').toLowerCase(); // 'carbon' | 'distance'
+    const whereWindow = parseWindowToSql(windowStr);
 
-    const metricCol = metric === 'distance' ? 'distance_km' : 'carbonReduce';
+    // รวม 2 ตาราง (เดิน+ปั่น) แล้ว sum ตาม metric
+    // metric=carbon -> SUM(carbonReduce), metric=distance -> SUM(distance_km)
+    const metricExpr = metric === 'distance' ? 'distance_km' : 'carbonReduce';
 
     const [rows] = await db.query(`
-      SELECT u.user_id, u.fname, u.lname,
-             SUM(t.${metricCol}) AS total_metric
-      FROM users u
-      JOIN (
-        SELECT user_id, ${metricCol}, record_date FROM walk_history
-        UNION ALL
-        SELECT user_id, ${metricCol}, record_date FROM bic_history
-      ) t ON t.user_id = u.user_id
-      WHERE t.record_date >= NOW() - INTERVAL ? DAY
-      GROUP BY u.user_id
-      ORDER BY total_metric DESC
-      LIMIT 10
-    `, [days]);
+      SELECT u.user_id,
+             CONCAT(COALESCE(u.fname,''), ' ', COALESCE(u.lname,'')) AS name,
+             u.email,
+             SUM(x.${metricExpr}) AS total_value
+      FROM (
+          SELECT user_id, ${metricExpr}, record_date FROM walk_history WHERE ${whereWindow}
+          UNION ALL
+          SELECT user_id, ${metricExpr}, record_date FROM bic_history  WHERE ${whereWindow}
+      ) AS x
+      JOIN users u ON u.user_id = x.user_id
+      GROUP BY u.user_id, name, u.email
+      ORDER BY total_value DESC
+      LIMIT 20
+    `);
 
-    res.json({
-      success: true,
-      data: rows.map(r => ({
-        user_id: r.user_id,
-        name: `${r.fname} ${r.lname}`,
-        total: Number(r.total_metric)
-      }))
-    });
+    const data = rows.map(r => ({
+      user_id: r.user_id,
+      name: (r.name || '').trim() || r.email || `user_${r.user_id}`,
+      total: Number(r.total_value || 0)
+    }));
+    res.json({ success: true, data, meta: { window: windowStr, metric } });
   } catch (err) {
     console.error('GET /admin/insights/leaderboard error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
 
-// ---------------------- NEW: dropdown รายชื่อผู้ใช้แบบเบา ----------------------
-router.get('/users/min', verifyToken, verifyAdmin, async (req, res) => {
+/* ====================== Rewards Management ====================== */
+const REWARD_TABLE = 'reward'; // ใช้ชื่อ table เอกพจน์ตาม DB ของคุณ
+
+// List
+router.get('/rewards', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT user_id, CONCAT(fname, ' ', lname) AS name, email
-      FROM users
-      ORDER BY user_id DESC
-      LIMIT 1000
+      SELECT
+        id, title, description, image_url, cost_points,
+        expires_at, CAST(active AS UNSIGNED) AS active,
+        stock, created_at, updated_at
+      FROM ${REWARD_TABLE}
+      ORDER BY created_at DESC, id DESC
     `);
     res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('GET /admin/users/min error:', err);
-    res.status(500).json({ message: 'DB error' });
+    console.error('GET /admin/rewards error:', err);
+    res.status(500).json({ message: 'DB error on rewards list' });
   }
 });
 
-// ---------------------- NEW: Activity Explorer (รวม walk + bike) ----------------------
-router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
+// Create
+router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    // query params: user_id (required), type: 'all'|'walk'|'bike', date_from, date_to, limit, offset
-    const userId = Number(req.query.user_id);
-    const type = (req.query.type || 'all').toString().toLowerCase(); // all | walk | bike
-    const dateFrom = req.query.date_from ? new Date(req.query.date_from) : null;
-    const dateTo   = req.query.date_to   ? new Date(req.query.date_to)   : null;
-    const limit  = Math.min(Math.max(Number(req.query.limit) || 20, 1), 200);
-    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    let { title, description, image_url, cost_points, expires_at, active, stock } = req.body;
 
-    if (!Number.isFinite(userId)) {
-      return res.status(400).json({ message: 'user_id is required' });
-    }
+    title = String(title || '').slice(0, 120);
+    description = description ?? '';
+    image_url = image_url ? String(image_url).slice(0, 255) : null;
+    cost_points = Number.isFinite(Number(cost_points)) ? Number(cost_points) : 0;
+    stock = Number.isFinite(Number(stock)) ? Number(stock) : 0;
+    active = Number(active) ? 1 : 0;
+    expires_at = expires_at || null; // 'YYYY-MM-DD HH:mm:ss' หรือ null
 
-    // สร้างเงื่อนไขวันที่แบบยืดหยุ่น
-    const walkConds = ['w.user_id = ?'];
-    const bikeConds = ['b.user_id = ?'];
-    const paramsWalk = [userId];
-    const paramsBike = [userId];
+    const [result] = await db.query(
+      `INSERT INTO ${REWARD_TABLE}
+        (title, description, image_url, cost_points, expires_at, active, stock, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [title, description, image_url, cost_points, expires_at, active, stock]
+    );
 
-    if (dateFrom) {
-      walkConds.push('w.record_date >= ?');
-      bikeConds.push('b.record_date >= ?');
-      paramsWalk.push(dateFrom);
-      paramsBike.push(dateFrom);
-    }
-    if (dateTo) {
-      walkConds.push('w.record_date <= ?');
-      bikeConds.push('b.record_date <= ?');
-      paramsWalk.push(dateTo);
-      paramsBike.push(dateTo);
-    }
-
-    // แต่ละ SELECT ให้ column เดียวกัน เพื่อ UNION ได้ง่าย
-    const walkSql = `
+    const [rows] = await db.query(`
       SELECT
-        'walk' AS type,
-        w.id,
-        w.record_date,
-        w.distance_km,
-        w.carbonReduce,
-        w.duration_sec,
-        w.step_total,
-        NULL AS title_bike,
-        w.title AS title,
-        w.description AS description
-      FROM walk_history w
-      WHERE ${walkConds.join(' AND ')}
-    `;
+        id, title, description, image_url, cost_points,
+        expires_at, CAST(active AS UNSIGNED) AS active,
+        stock, created_at, updated_at
+      FROM ${REWARD_TABLE}
+      WHERE id = ?
+    `, [result.insertId]);
 
-    const bikeSql = `
-      SELECT
-        'bike' AS type,
-        b.id,
-        b.record_date,
-        b.distance_km,
-        b.carbonReduce,
-        b.duration_sec,
-        NULL AS step_total,
-        b.title AS title_bike,
-        b.title AS title,
-        b.description AS description
-      FROM bic_history b
-      WHERE ${bikeConds.join(' AND ')}
-    `;
-
-    // เลือก type
-    let unionSql = '';
-    let unionParams = [];
-    if (type === 'walk') {
-      unionSql = walkSql;
-      unionParams = paramsWalk;
-    } else if (type === 'bike') {
-      unionSql = bikeSql;
-      unionParams = paramsBike;
-    } else {
-      // all
-      unionSql = `${walkSql} UNION ALL ${bikeSql}`;
-      unionParams = [...paramsWalk, ...paramsBike];
-    }
-
-    // ต้อง wrap แล้ว ORDER BY + LIMIT ให้ทั้งกอง
-    const finalSql = `
-      SELECT *
-      FROM (
-        ${unionSql}
-      ) t
-      ORDER BY t.record_date DESC
-      LIMIT ? OFFSET ?
-    `;
-
-    const [rows] = await db.query(finalSql, [...unionParams, limit, offset]);
-
-    // แยกนับรวมหมด (เพื่อ pagination)
-    const countSql = `
-      SELECT COUNT(*) AS total FROM (
-        ${unionSql}
-      ) x
-    `;
-    const [countRows] = await db.query(countSql, unionParams);
-    const total = Number(countRows?.[0]?.total || 0);
-
-    res.json({
-      success: true,
-      data: rows.map(r => ({
-        ...r,
-        distance_km: r.distance_km == null ? null : Number(r.distance_km),
-        carbonReduce: r.carbonReduce == null ? null : Number(r.carbonReduce),
-        duration_sec: r.duration_sec == null ? null : Number(r.duration_sec),
-        step_total: r.step_total == null ? null : Number(r.step_total),
-      })),
-      pagination: { total, limit, offset }
-    });
+    res.json({ success: true, data: rows[0] });
   } catch (err) {
-    console.error('GET /admin/activity error:', err);
-    res.status(500).json({ message: 'DB error' });
+    console.error('POST /admin/rewards error:', err);
+    res.status(500).json({ message: 'DB error on reward create' });
+  }
+});
+
+// Update
+router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    let { title, description, image_url, cost_points, expires_at, active, stock } = req.body;
+
+    const fields = [];
+    const values = [];
+    if (title !== undefined) { fields.push('title = ?'); values.push(String(title).slice(0,120)); }
+    if (description !== undefined) { fields.push('description = ?'); values.push(String(description)); }
+    if (image_url !== undefined) { fields.push('image_url = ?'); values.push(image_url ? String(image_url).slice(0,255) : null); }
+    if (cost_points !== undefined) { fields.push('cost_points = ?'); values.push(Number(cost_points) || 0); }
+    if (expires_at !== undefined) { fields.push('expires_at = ?'); values.push(expires_at || null); }
+    if (active !== undefined) { fields.push('active = ?'); values.push(Number(active) ? 1 : 0); }
+    if (stock !== undefined) { fields.push('stock = ?'); values.push(Number(stock) || 0); }
+
+    if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
+    fields.push('updated_at = NOW()');
+
+    await db.query(
+      `UPDATE ${REWARD_TABLE} SET ${fields.join(', ')} WHERE id = ?`,
+      [...values, id]
+    );
+
+    const [rows] = await db.query(`
+      SELECT
+        id, title, description, image_url, cost_points,
+        expires_at, CAST(active AS UNSIGNED) AS active,
+        stock, created_at, updated_at
+      FROM ${REWARD_TABLE}
+      WHERE id = ?
+    `, [id]);
+
+    res.json({ success: true, data: rows[0] || null });
+  } catch (err) {
+    console.error('PUT /admin/rewards/:id error:', err);
+    res.status(500).json({ message: 'DB error on reward update' });
+  }
+});
+
+// Toggle active
+router.patch('/rewards/:id/toggle', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await db.query(`UPDATE ${REWARD_TABLE} SET active = 1 - active, updated_at = NOW() WHERE id = ?`, [id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('PATCH /admin/rewards/:id/toggle error:', err);
+    res.status(500).json({ message: 'DB error on toggle' });
+  }
+});
+
+// Delete
+router.delete('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await db.query(`DELETE FROM ${REWARD_TABLE} WHERE id = ?`, [id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /admin/rewards/:id error:', err);
+    res.status(500).json({ message: 'DB error on reward delete' });
   }
 });
 

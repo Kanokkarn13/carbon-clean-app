@@ -10,6 +10,7 @@ const { saveCycling } = require('./controllers/saveCyclingController');
 const activityRoutes = require('./routes/activityRoutes');
 const adminRoutes = require('./routes/admin');
 const blogRoutes = require('./routes/blogs');
+const rewardsRoutes = require('./routes/rewards');
 
 const app = express();
 
@@ -66,6 +67,7 @@ app.post('/api/save-cycling', saveCycling);
 // ✅ Admin + Blog routes
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', blogRoutes);
+app.use('/api/admin', rewardsRoutes);
 
 // ✅ Activity routes
 app.use('/api', activityRoutes);
