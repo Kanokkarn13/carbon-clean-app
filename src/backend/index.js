@@ -1,8 +1,7 @@
-require('dotenv').config(); // โหลดตัวแปรจาก .env
+require('dotenv').config();
 
 const express = require('express');
 const bodyParser = require('body-parser');
-const cors = require('cors');
 const path = require('path');
 
 const db = require('./config/db');
@@ -13,25 +12,21 @@ const { saveCycling } = require('./controllers/saveCyclingController');
 const activityRoutes = require('./routes/activityRoutes');
 const adminRoutes = require('./routes/admin');
 const blogRoutes = require('./routes/blogs');
-const rewardsRoutes = require('./routes/rewards'); // ถ้ามี route แยกของ reward ไว้
+const rewardsRoutes = require('./routes/rewards'); // ถ้าไม่มีไฟล์นี้ ให้ลบบรรทัด mount ด้านล่าง
 
 const app = express();
 
-/* ---------------------- Static uploads ---------------------- */
+/* ---------- Static uploads ---------- */
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-/* ---------------------- Body parser ---------------------- */
+/* ---------- Body parser ---------- */
 app.use(bodyParser.json());
 
-/* ---------------------- CORS control ---------------------- */
+/* ---------- CORS Gate (แทน cors() + app.options('*')) ---------- */
 /**
- * ALLOWED_ORIGINS: คั่นด้วย comma เช่น
- * http://localhost:5173,https://your-frontend.vercel.app
- *
- * ถ้าอยากอนุญาต subdomain ของ Vercel ทั้งหมดสำหรับโปรเจกต์เดียว
- * ให้ตั้ง ALLOW_VERCEL_SUBDOMAINS=true (ค่า default=false)
- * แล้วตั้ง VERCEL_PROJECT_PREFIX=admin-dashboard-forcar
- * จะยอมรับ origin ที่เป็น https://<อะไรก็ได้>.admin-dashboard-forcar-*.vercel.app
+ * ตั้งค่า env:
+ * ALLOWED_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
+ * (เพิ่ม origin อื่น ๆ ตามจริง)
  */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
@@ -39,66 +34,64 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .filter(Boolean);
 
 const ALLOW_VERCEL_SUBDOMAINS = String(process.env.ALLOW_VERCEL_SUBDOMAINS || 'false').toLowerCase() === 'true';
-const VERCEL_PROJECT_PREFIX = process.env.VERCEL_PROJECT_PREFIX || ''; // e.g. 'admin-dashboard-forcar'
+const VERCEL_PROJECT_PREFIX = process.env.VERCEL_PROJECT_PREFIX || ''; // เช่น 'admin-dashboard-forcar'
 
-function isLocalhost(origin) {
-  return !!origin && (
-    origin.startsWith('http://localhost:') ||
-    origin.startsWith('http://127.0.0.1:')
-  );
+function isLocal(origin) {
+  return !!origin && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'));
 }
-
-function isAllowedVercel(origin) {
-  if (!ALLOW_VERCEL_SUBDOMAINS || !VERCEL_PROJECT_PREFIX) return false;
-  try {
-    const u = new URL(origin);
-    // ตัวอย่าง host: admin-dashboard-forcar-xxxxx.vercel.app หรือ <preview>.admin-dashboard-forcar-xxxxx.vercel.app
-    // เช็คว่ามีชิ้นส่วนที่ขึ้นต้นด้วย prefix
-    // ใช้ includes/startsWith แบบคร่าวๆตามรูปแบบของ Vercel
-    return u.hostname.includes(`${VERCEL_PROJECT_PREFIX}`) && u.hostname.endsWith('.vercel.app');
-  } catch {
-    return false;
-  }
-}
-
-function isExplicitAllowed(origin) {
+function isExplicit(origin) {
   return allowedOrigins.includes(origin);
 }
-
-function isAllowedOrigin(origin) {
-  // อนุญาต request ที่ไม่มี origin (เช่น curl/health-check)
+function isVercel(origin) {
+  if (!ALLOW_VERCEL_SUBDOMAINS || !VERCEL_PROJECT_PREFIX || !origin) return false;
+  try {
+    const h = new URL(origin).hostname;
+    return h.includes(VERCEL_PROJECT_PREFIX) && h.endsWith('.vercel.app');
+  } catch { return false; }
+}
+function isAllowed(origin) {
+  // ไม่มี origin (curl/health check) = allow
   if (!origin) return true;
-  if (isExplicitAllowed(origin)) return true;
-  if (isLocalhost(origin)) return true;
-  if (isAllowedVercel(origin)) return true;
-  return false;
+  return isExplicit(origin) || isLocal(origin) || isVercel(origin);
 }
 
-const corsOptions = {
-  origin: (origin, cb) => {
-    const ok = isAllowedOrigin(origin);
-    if (ok) return cb(null, true);
-    console.warn('❌ Blocked CORS Origin:', origin, '| allowed:', allowedOrigins);
-    return cb(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  maxAge: 86400, // cache preflight 24 ชม.
-};
-
-// จัดการ preflight ให้ทุกเส้นทาง
-app.options('*', cors(corsOptions));
-// เปิด CORS สำหรับทุก request
-app.use(cors(corsOptions));
-
-/* ---------------------- Debug log (สั้นๆ) ---------------------- */
+/** CORS middleware (ไม่ใช้ path '*', จัดการทุก request) */
 app.use((req, res, next) => {
-  console.log(`📥 ${req.method} ${req.url} from ${req.headers.origin || 'unknown origin'}`);
+  const origin = req.headers.origin;
+
+  if (!isAllowed(origin)) {
+    console.warn('❌ Blocked CORS Origin:', origin, '| allowed:', allowedOrigins);
+    return res.status(403).send('Not allowed by CORS');
+  }
+
+  // allow
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    // ให้ cache per-origin
+    res.setHeader('Vary', 'Origin');
+  } else {
+    // ไม่มี origin เช่น curl
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400'); // 24h
+
+  if (req.method === 'OPTIONS') {
+    // ตอบ preflight ตรงนี้เลย (ไม่ต้อง .options('*'))
+    return res.sendStatus(204);
+  }
   next();
 });
 
-/* ---------------------- DB ping ---------------------- */
+/* ---------- Debug log ---------- */
+app.use((req, res, next) => {
+  console.log(`📥 ${req.method} ${req.url} from ${req.headers.origin || 'no-origin'}`);
+  next();
+});
+
+/* ---------- DB ping ---------- */
 (async () => {
   try {
     await db.query('SELECT 1');
@@ -108,7 +101,7 @@ app.use((req, res, next) => {
   }
 })();
 
-/* ---------------------- Health ---------------------- */
+/* ---------- Health ---------- */
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -119,39 +112,38 @@ app.get('/health', (req, res) => {
   });
 });
 
-/* ---------------------- Auth ---------------------- */
+/* ---------- Auth ---------- */
 app.post('/api/check-user', authController.login);
 app.post('/api/register', authController.register);
 app.post('/api/update-user', authController.updateUser);
 app.post('/api/set-goal', authController.setGoal);
 
-/* ---------------------- Activity save ---------------------- */
+/* ---------- Save activities ---------- */
 app.post('/api/save-walking', saveWalking);
 app.post('/api/save-cycling', saveCycling);
 
-/* ---------------------- Admin APIs ---------------------- */
+/* ---------- Admin APIs ---------- */
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', blogRoutes);
 
-// ถ้าไฟล์ routes/admin.js รวม reward แล้ว “ไม่ต้อง” mount ซ้ำ
-// แต่ถ้าคุณแยก rewardsRoutes ออกมาเฉพาะ ให้คงบรรทัดนี้ไว้
+// ถ้า rewards รวมอยู่ใน adminRoutes แล้ว ให้ลบบรรทัดนี้เพื่อเลี่ยงซ้ำ
 app.use('/api/admin', rewardsRoutes);
 
-/* ---------------------- Activity read APIs ---------------------- */
+/* ---------- Activity read APIs ---------- */
 app.use('/api', activityRoutes);
 
-/* ---------------------- Root ---------------------- */
+/* ---------- Root ---------- */
 app.get('/', (req, res) => {
   res.send('🌐 CarbonClean API is running successfully!');
 });
 
-/* ---------------------- Start ---------------------- */
+/* ---------- Start ---------- */
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Server running on http://${HOST}:${PORT}`);
   console.log('🔐 CORS allow list:', allowedOrigins);
   if (ALLOW_VERCEL_SUBDOMAINS) {
-    console.log(`🔓 Allow Vercel subdomains for project prefix: ${VERCEL_PROJECT_PREFIX}*.vercel.app`);
+    console.log(`🔓 Allow Vercel subdomains for prefix: ${VERCEL_PROJECT_PREFIX}*.vercel.app`);
   }
 });
