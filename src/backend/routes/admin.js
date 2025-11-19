@@ -18,22 +18,17 @@ function buildUpdateSet(allowed, payload) {
 function normalizeUsers(rows) {
   return rows.map((r) => ({ ...r, status: Number(r.status) }));
 }
-
 function pickTable(type) {
-  // map type -> table and nice label
   if (type === 'bike' || type === 'bic' || type === 'bicycle') {
     return { table: 'bic_history', label: 'bike' };
   }
-  return { table: 'walk_history', label: 'walk' }; // default
+  return { table: 'walk_history', label: 'walk' };
 }
 function parseWindowToSql(windowStr) {
-  // returns SQL condition on record_date
-  // '7d','30d','90d','all' (default 30d)
   const w = String(windowStr || '').toLowerCase();
   if (w === '7d') return "record_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
   if (w === '90d') return "record_date >= DATE_SUB(NOW(), INTERVAL 90 DAY)";
   if (w === 'all') return "1=1";
-  // default 30d
   return "record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
 }
 
@@ -57,7 +52,7 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-// 🔹 Minimal user list for selectors: /admin/users/min
+// 🔹 Minimal list
 router.get('/users/min', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -150,12 +145,9 @@ router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Summary API ====================== */
-// แทนที่ทั้ง router.get('/summary', ...) เดิมใน src/backend/routes/admin.js
-
+/* ====================== Summary API (รวม activity) ====================== */
 router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    // ----- 1) ผู้ใช้ -----
     const [ovRows] = await db.query(`
       SELECT
         COUNT(*) AS total_users,
@@ -180,7 +172,8 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
 
     const [statusRows] = await db.query(`
       SELECT CAST(status AS UNSIGNED) AS status, COUNT(*) AS cnt
-      FROM users GROUP BY CAST(status AS UNSIGNED)
+      FROM users
+      GROUP BY CAST(status AS UNSIGNED)
     `);
     const [roleRows] = await db.query(`SELECT role, COUNT(*) AS cnt FROM users GROUP BY role`);
     const [vehicleRows] = await db.query(`
@@ -191,25 +184,20 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
       LIMIT 8
     `);
 
-    // ----- 2) กิจกรรม (Walk + Bike) -----
-    // รวมทั้งหมด + ของเดือนนี้ + นับรายการ + ค่าเฉลี่ยระยะ/pace
     const [aggAll] = await db.query(`
       SELECT
-        -- รวมระยะทางทั้งหมด (กม.)
         COALESCE((SELECT SUM(distance_km) FROM walk_history),0)
           + COALESCE((SELECT SUM(distance_km) FROM bic_history),0) AS total_km_all,
-        -- รวมคาร์บอนทั้งหมด (กก. CO2e)
         COALESCE((SELECT SUM(carbonReduce) FROM walk_history),0)
           + COALESCE((SELECT SUM(carbonReduce) FROM bic_history),0) AS carbon_total_all,
 
-        -- ระยะทางเดือนนี้
         COALESCE((SELECT SUM(distance_km) FROM walk_history
                   WHERE YEAR(record_date)=YEAR(CURDATE())
                     AND MONTH(record_date)=MONTH(CURDATE())),0)
           + COALESCE((SELECT SUM(distance_km) FROM bic_history
                   WHERE YEAR(record_date)=YEAR(CURDATE())
                     AND MONTH(record_date)=MONTH(CURDATE())),0) AS total_km_month,
-        -- คาร์บอนเดือนนี้
+
         COALESCE((SELECT SUM(carbonReduce) FROM walk_history
                   WHERE YEAR(record_date)=YEAR(CURDATE())
                     AND MONTH(record_date)=MONTH(CURDATE())),0)
@@ -217,7 +205,6 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
                   WHERE YEAR(record_date)=YEAR(CURDATE())
                     AND MONTH(record_date)=MONTH(CURDATE())),0) AS carbon_total_month,
 
-        -- นับจำนวนกิจกรรม
         (SELECT COUNT(*) FROM walk_history) AS walk_count,
         (SELECT COUNT(*) FROM bic_history)  AS bike_count
     `);
@@ -226,11 +213,9 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
       SELECT
         (SELECT AVG(distance_km) FROM walk_history WHERE distance_km > 0) AS walk_avg_km,
         (SELECT AVG(distance_km) FROM bic_history  WHERE distance_km > 0) AS bike_avg_km,
-
         (SELECT AVG(distance_km / (duration_sec/3600))
            FROM walk_history
           WHERE duration_sec IS NOT NULL AND duration_sec > 0 AND distance_km IS NOT NULL) AS walk_avg_pace_kmh,
-
         (SELECT AVG(distance_km / (duration_sec/3600))
            FROM bic_history
           WHERE duration_sec IS NOT NULL AND duration_sec > 0 AND distance_km IS NOT NULL) AS bike_avg_pace_kmh
@@ -250,7 +235,6 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
          ) u WHERE u.record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)) AS active30
     `);
 
-    // ----- 3) ส่งกลับ -----
     res.json({
       success: true,
       data: {
@@ -290,12 +274,7 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-
-/* ====================== Insights APIs (NEW) ====================== */
-/**
- * GET /admin/insights/hourly?type=walk|bike
- * กลุ่มจำนวนกิจกรรมตามชั่วโมง (0-23)
- */
+/* ====================== Insights APIs ====================== */
 router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { type = 'walk' } = req.query;
@@ -318,10 +297,6 @@ router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/**
- * GET /admin/insights/weekday?type=walk|bike
- * กลุ่มจำนวนกิจกรรมตามวันในสัปดาห์ (0-6) อา=0 … ส=6
- */
 router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { type = 'walk' } = req.query;
@@ -335,7 +310,7 @@ router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
     `);
     const data = Array.from({ length: 7 }, (_, wd) => {
       const r = rows.find(x => Number(x.wd) === wd);
-      return { weekday: wd, count: r ? Number(r.cnt) : 0 };
+      return { dow: wd, count: r ? Number(r.cnt) : 0 };
     });
     res.json({ success: true, data });
   } catch (err) {
@@ -344,10 +319,6 @@ router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/**
- * GET /admin/insights/distance_hist?type=walk|bike
- * ฮิสโตแกรมระยะทาง (bin size 1 กม. 0–1,1–2,..., >=20 รวมเป็น 20+)
- */
 router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { type = 'walk' } = req.query;
@@ -355,20 +326,16 @@ router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res)
 
     const [rows] = await db.query(`
       SELECT
-        CASE
-          WHEN distance_km >= 20 THEN 20
-          ELSE FLOOR(distance_km)
-        END AS bin,
+        CASE WHEN distance_km >= 20 THEN 20 ELSE FLOOR(distance_km) END AS bin,
         COUNT(*) AS cnt
       FROM ${table}
       WHERE distance_km IS NOT NULL
       GROUP BY bin
       ORDER BY bin
     `);
-    // bins 0..20 (20 = 20+)
     const data = Array.from({ length: 21 }, (_, b) => {
       const r = rows.find(x => Number(x.bin) === b);
-      return { bin: b, label: b === 20 ? '20+' : `${b}-${b+1}`, count: r ? Number(r.cnt) : 0 };
+      return { bin: b, count: r ? Number(r.cnt) : 0 };
     });
     res.json({ success: true, data });
   } catch (err) {
@@ -377,18 +344,11 @@ router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res)
   }
 });
 
-/**
- * GET /admin/insights/leaderboard?window=7d|30d|90d|all&metric=carbon|distance
- * สรุป top ผู้ใช้ตาม metric ในช่วงเวลาที่กำหนด
- */
 router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const windowStr = String(req.query.window || '30d').toLowerCase();
     const metric = String(req.query.metric || 'carbon').toLowerCase(); // 'carbon' | 'distance'
     const whereWindow = parseWindowToSql(windowStr);
-
-    // รวม 2 ตาราง (เดิน+ปั่น) แล้ว sum ตาม metric
-    // metric=carbon -> SUM(carbonReduce), metric=distance -> SUM(distance_km)
     const metricExpr = metric === 'distance' ? 'distance_km' : 'carbonReduce';
 
     const [rows] = await db.query(`
@@ -419,8 +379,107 @@ router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) =
   }
 });
 
+/* ====================== NEW: Admin Activity (fix 404) ====================== */
+/**
+ * GET /admin/activity?user_id=24&type=all|walk|bike&limit=20&offset=0
+ * รวมกิจกรรมจาก walk_history + bic_history
+ */
+router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const userId = Number(req.query.user_id || 0);
+    const type = String(req.query.type || 'all').toLowerCase(); // all|walk|bike
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)));
+    const offset = Math.max(0, Number(req.query.offset || 0));
+
+    if (!userId) return res.status(400).json({ message: 'user_id is required' });
+
+    // --- Build UNION + where ---
+    const parts = [];
+    const vals = [];
+    if (type === 'all' || type === 'walk') {
+      parts.push(`
+        SELECT
+          'walk' AS act_type,
+          id, user_id,
+          distance_km,
+          duration_sec,
+          carbonReduce,
+          record_date
+        FROM walk_history
+        WHERE user_id = ?
+      `);
+      vals.push(userId);
+    }
+    if (type === 'all' || type === 'bike' || type === 'bic' || type === 'bicycle') {
+      parts.push(`
+        SELECT
+          'bike' AS act_type,
+          id, user_id,
+          distance_km,
+          duration_sec,
+          carbonReduce,
+          record_date
+        FROM bic_history
+        WHERE user_id = ?
+      `);
+      vals.push(userId);
+    }
+
+    if (parts.length === 0) {
+      return res.json({ success: true, data: [], meta: { total: 0, limit, offset } });
+    }
+
+    const unionSql = parts.join(' UNION ALL ');
+    const listSql = `
+      SELECT
+        act_type AS type,
+        id,
+        user_id,
+        COALESCE(distance_km,0) AS distance_km,
+        COALESCE(carbonReduce,0) AS carbonReduce,
+        COALESCE(duration_sec,0) AS duration_sec,
+        (CASE WHEN duration_sec IS NOT NULL AND duration_sec > 0
+              THEN (distance_km / (duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+        (duration_sec/3600.0) AS duration_h,
+        record_date
+      FROM ( ${unionSql} ) t
+      ORDER BY record_date DESC
+      LIMIT ? OFFSET ?;
+    `;
+
+    const countSql = `
+      SELECT SUM(cnt) AS total FROM (
+        ${parts.map(p => `SELECT COUNT(*) AS cnt FROM (${p}) _t`).join(' UNION ALL ')}
+      ) c;
+    `;
+
+    // query list
+    const [listRows] = await db.query(listSql, [...vals, limit, offset]);
+    // query total
+    const [countRows] = await db.query(countSql, vals);
+    const total = Number(countRows[0]?.total || 0);
+
+    // map response
+    const data = listRows.map(r => ({
+      type: r.type,
+      id: r.id,
+      user_id: r.user_id,
+      distance_km: Number(r.distance_km || 0),
+      carbonReduce: Number(r.carbonReduce || 0),
+      duration_h: r.duration_h == null ? null : Number(r.duration_h),
+      pace_kmh: r.pace_kmh == null ? null : Number(r.pace_kmh),
+      record_date: r.record_date, // datetime
+    }));
+
+    res.json({ success: true, data, meta: { total, limit, offset } });
+  } catch (err) {
+    console.error('GET /admin/activity error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
 /* ====================== Rewards Management ====================== */
-const REWARD_TABLE = 'reward'; // ใช้ชื่อ table เอกพจน์ตาม DB ของคุณ
+const REWARD_TABLE = 'reward';
 
 // List
 router.get('/rewards', verifyToken, verifyAdmin, async (req, res) => {
@@ -451,7 +510,7 @@ router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
     cost_points = Number.isFinite(Number(cost_points)) ? Number(cost_points) : 0;
     stock = Number.isFinite(Number(stock)) ? Number(stock) : 0;
     active = Number(active) ? 1 : 0;
-    expires_at = expires_at || null; // 'YYYY-MM-DD HH:mm:ss' หรือ null
+    expires_at = expires_at || null;
 
     const [result] = await db.query(
       `INSERT INTO ${REWARD_TABLE}
