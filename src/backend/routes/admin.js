@@ -3,6 +3,17 @@ const router = express.Router();
 const db = require('../config/db');
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 
+const { uploadBufferToS3, getSignedGetObjectUrl } = require('../utils/s3');
+const multer = require('multer');
+const path = require('path');
+const crypto = require('crypto');
+
+// memory storage สำหรับรับไฟล์จาก form-data
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
+
 /* ---------------------- helpers ---------------------- */
 function buildUpdateSet(allowed, payload) {
   const keys = [];
@@ -25,9 +36,7 @@ function pickTable(type) {
   return { table: 'walk_history', label: 'walk' };
 }
 
-/** window string -> SQL date condition using record_date
- * supports: 7d, 30d, 90d, this_week, this_month, all, or custom from/to
- */
+/** window string -> SQL date condition using record_date */
 function whereByWindowOrRange({ window, from, to }) {
   const hasRange = from || to;
   if (hasRange) {
@@ -41,7 +50,6 @@ function whereByWindowOrRange({ window, from, to }) {
   if (w === 'this_week') return "YEARWEEK(record_date, 1) = YEARWEEK(CURDATE(), 1)";
   if (w === 'this_month') return "DATE_FORMAT(record_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')";
   if (w === 'all') return "1=1";
-  // default 30d
   return "record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
 }
 
@@ -65,7 +73,6 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-// Minimal list
 router.get('/users/min', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -398,18 +405,14 @@ router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) =
 });
 
 /* ====================== NEW: Aggregates for Carbon KPIs ====================== */
-// GET /admin/insights/aggregates?window=30d|...&from=YYYY-MM-DD&to=YYYY-MM-DD
 router.get('/insights/aggregates', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { window, from, to } = req.query;
     const whereTime = whereByWindowOrRange({ window, from, to });
 
-    // factor สำหรับการปล่อยคาร์บอนต่อ 1 กม. (kg CO2e per km)
-    const EF_WALK = Number(process.env.EF_WALK_KG_PER_KM ?? 0);       // เดิน ปกติ 0
-    const EF_BIKE = Number(process.env.EF_BIKE_KG_PER_KM ?? 0.016);   // ปั่นจักรยาน (โดยปกติ ~0.01–0.05)
+    const EF_WALK = Number(process.env.EF_WALK_KG_PER_KM ?? 0);
+    const EF_BIKE = Number(process.env.EF_BIKE_KG_PER_KM ?? 0.016);
 
-    // carbon_reduce: sum(carbonReduce)
-    // carbon_emitted: sum(distance_km * EF)
     const [rows] = await db.query(
       `
       SELECT
@@ -657,6 +660,57 @@ router.delete('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
   } catch (err) {
     console.error('DELETE /admin/rewards/:id error:', err);
     res.status(500).json({ message: 'DB error on reward delete' });
+  }
+});
+
+/* ---------- Upload image (no ACL) ---------- */
+router.post(
+  '/rewards/upload',
+  verifyToken,
+  verifyAdmin,
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      const file = req.file;
+      if (!file) return res.status(400).json({ message: 'file is required' });
+
+      const ext = path.extname(file.originalname || '').toLowerCase() || '.bin';
+      const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+      const key = `reward/${filename}`; // force under reward/
+
+      await uploadBufferToS3({
+        buffer: file.buffer,
+        contentType: file.mimetype,
+        key,
+      });
+
+      // public URL = our route that redirects to signed URL (use query string to avoid path-to-regexp issues)
+      const base = `${req.protocol}://${req.get('host')}`;
+      const publicUrl = `${base}/admin/rewards/file?key=${encodeURIComponent(key)}`;
+
+      return res.json({ success: true, url: publicUrl, key });
+    } catch (err) {
+      console.error('POST /admin/rewards/upload error:', err);
+      return res.status(500).json({ message: err?.message || 'upload failed' });
+    }
+  }
+);
+
+/* ---------- Serve signed URL via redirect (query string) ---------- */
+router.get('/rewards/file', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const rawKey = req.query.key || '';
+    const key = decodeURIComponent(String(rawKey));
+
+    if (!key.startsWith('reward/')) {
+      return res.status(400).send('invalid key');
+    }
+
+    const signed = await getSignedGetObjectUrl(key, 60 * 60); // 1h
+    return res.redirect(302, signed);
+  } catch (err) {
+    console.error('GET /admin/rewards/file error:', err);
+    return res.status(500).send('cannot get file');
   }
 });
 

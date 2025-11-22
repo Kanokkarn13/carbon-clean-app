@@ -5,18 +5,17 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
 
-// ✅ อยู่โฟลเดอร์เดียวกับ index.js ต้องใช้ ./config/db
+// ✅ modules
 const db = require('./config/db');
-
 const authController = require('./controllers/authController');
 const { saveWalking } = require('./controllers/saveWalkingController');
 const { saveCycling } = require('./controllers/saveCyclingController');
 
 const activityRoutes = require('./routes/activityRoutes');
 const adminRoutes = require('./routes/admin');
-const blogRoutes = require('./routes/blogs');
+const blogRoutes = require('./routes/blogs');        // ถ้ามีของเดิม
+const blogAdminRoutes = require('./routes/blogAdmin'); // ✅ ใหม่ (S3 โฟลเดอร์ blog)
 
-// (ถ้าไม่มีไฟล์ routes/rewards.js อยู่ ให้ไม่ต้องสร้าง/ไม่ต้อง mount ก็ได้)
 let rewardsRoutes = null;
 try {
   rewardsRoutes = require('./routes/rewards');
@@ -25,6 +24,7 @@ try {
   console.log('[info] rewardsRoutes not found (skip)');
 }
 
+// ---------- สร้าง app ก่อนใช้ app.use ทุกจุด ----------
 const app = express();
 
 /* ---------- Static uploads ---------- */
@@ -33,13 +33,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 /* ---------- Body parser ---------- */
 app.use(bodyParser.json());
 
-/* ---------- CORS Gate (ไม่ใช้ path wildcard) ---------- */
-/*
-  ตั้งค่าใน .env เช่น:
-  ALLOWED_ORIGINS=https://your-frontend.vercel.app,http://localhost:5173
-  ALLOW_VERCEL_SUBDOMAINS=true
-  VERCEL_PROJECT_PREFIX=admin-dashboard-forcar
-*/
+/* ---------- CORS Gate ---------- */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(s => s.trim())
@@ -128,8 +122,13 @@ app.post('/api/save-walking', saveWalking);
 app.post('/api/save-cycling', saveCycling);
 
 /* ---------- Admin APIs ---------- */
+// ของเดิม
 app.use('/api/admin', adminRoutes);
-app.use('/api/admin', blogRoutes);
+app.use('/api/admin', blogRoutes);     // ถ้ามี route เก่าอยู่
+
+// ✅ อันใหม่ที่เพิ่งเพิ่ม (S3 folder blog + signed URL via /admin/blogs/file)
+app.use('/api/admin', blogAdminRoutes);
+
 if (rewardsRoutes) app.use('/api/admin', rewardsRoutes);
 
 /* ---------- Activity read APIs ---------- */

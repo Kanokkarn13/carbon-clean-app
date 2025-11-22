@@ -6,6 +6,8 @@
     "start": "node src/backend/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.937.0",
+    "@aws-sdk/s3-request-presigner": "^3.937.0",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-community/masked-view": "^0.1.11",
     "@react-native-picker/picker": "2.11.1",
