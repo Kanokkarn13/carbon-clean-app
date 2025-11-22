@@ -25,7 +25,8 @@ AWS.config.update({
 const s3 = new AWS.S3();
 
 /**
- * Upload a buffer to S3 and return the public URL.
+ * Upload a buffer to S3 and return the object URL.
+ * Note: We avoid ACLs because many buckets enforce bucket-owner policies.
  */
 async function uploadToS3(buffer, key, contentType = 'application/octet-stream') {
   if (!bucketName) {
@@ -37,7 +38,6 @@ async function uploadToS3(buffer, key, contentType = 'application/octet-stream')
     Key: key,
     Body: buffer,
     ContentType: contentType,
-    ACL: 'public-read',
   };
 
   const result = await s3.upload(params).promise();
