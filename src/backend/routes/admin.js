@@ -1,3 +1,4 @@
+// src/backend/routes/admin.js
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
@@ -24,11 +25,24 @@ function pickTable(type) {
   }
   return { table: 'walk_history', label: 'walk' };
 }
-function parseWindowToSql(windowStr) {
-  const w = String(windowStr || '').toLowerCase();
+
+/** window string -> SQL date condition using record_date
+ * supports: 7d, 30d, 90d, this_week, this_month, all, or custom from/to
+ */
+function whereByWindowOrRange({ window, from, to }) {
+  const hasRange = from || to;
+  if (hasRange) {
+    const f = from ? `${from} 00:00:00` : '1970-01-01 00:00:00';
+    const t = to   ? `${to} 23:59:59` : '2999-12-31 23:59:59';
+    return `record_date BETWEEN '${f}' AND '${t}'`;
+  }
+  const w = String(window || '').toLowerCase();
   if (w === '7d') return "record_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
   if (w === '90d') return "record_date >= DATE_SUB(NOW(), INTERVAL 90 DAY)";
+  if (w === 'this_week') return "YEARWEEK(record_date, 1) = YEARWEEK(CURDATE(), 1)";
+  if (w === 'this_month') return "DATE_FORMAT(record_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')";
   if (w === 'all') return "1=1";
+  // default 30d
   return "record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
 }
 
@@ -52,7 +66,6 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-// 🔹 Minimal list
 router.get('/users/min', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -130,7 +143,7 @@ router.patch('/users/:id/unblock', verifyToken, verifyAdmin, async (req, res) =>
     await db.query(`UPDATE users SET status = 1 WHERE user_id = ?`, [id]);
     res.json({ success: true, message: 'User unblocked' });
   } catch (err) {
-    console.error('PATCH /admin/users/:id/unblock error:', err);
+    console.error('PATCH /users/:id/unblock error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
@@ -274,15 +287,18 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Insights APIs ====================== */
+/* ====================== Insights APIs (add time filters) ====================== */
+// GET /admin/insights/hourly?type=walk|bike&window=30d&from=YYYY-MM-DD&to=YYYY-MM-DD
 router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { type = 'walk' } = req.query;
+    const { type = 'walk', window, from, to } = req.query;
     const { table } = pickTable(String(type).toLowerCase());
+    const whereTime = whereByWindowOrRange({ window, from, to });
 
     const [rows] = await db.query(`
       SELECT HOUR(record_date) AS h, COUNT(*) AS cnt
       FROM ${table}
+      WHERE ${whereTime}
       GROUP BY HOUR(record_date)
       ORDER BY h
     `);
@@ -297,15 +313,18 @@ router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// GET /admin/insights/weekday?type=walk|bike&window=...&from&to
 router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { type = 'walk' } = req.query;
+    const { type = 'walk', window, from, to } = req.query;
     const { table } = pickTable(String(type).toLowerCase());
+    const whereTime = whereByWindowOrRange({ window, from, to });
 
     const [rows] = await db.query(`
-      SELECT DAYOFWEEK(record_date) - 1 AS wd, COUNT(*) AS cnt
+      SELECT (DAYOFWEEK(record_date) - 1) AS wd, COUNT(*) AS cnt
       FROM ${table}
-      GROUP BY DAYOFWEEK(record_date) - 1
+      WHERE ${whereTime}
+      GROUP BY (DAYOFWEEK(record_date) - 1)
       ORDER BY wd
     `);
     const data = Array.from({ length: 7 }, (_, wd) => {
@@ -319,17 +338,22 @@ router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// GET /admin/insights/distance_hist?type=walk|bike&window=...&from&to
 router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { type = 'walk' } = req.query;
+    const { type = 'walk', window, from, to } = req.query;
     const { table } = pickTable(String(type).toLowerCase());
+    const whereTime = whereByWindowOrRange({ window, from, to });
 
     const [rows] = await db.query(`
       SELECT
-        CASE WHEN distance_km >= 20 THEN 20 ELSE FLOOR(distance_km) END AS bin,
+        CASE
+          WHEN distance_km >= 20 THEN 20
+          ELSE FLOOR(distance_km)
+        END AS bin,
         COUNT(*) AS cnt
       FROM ${table}
-      WHERE distance_km IS NOT NULL
+      WHERE ${whereTime} AND distance_km IS NOT NULL
       GROUP BY bin
       ORDER BY bin
     `);
@@ -344,11 +368,12 @@ router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res)
   }
 });
 
+// GET /admin/insights/leaderboard?metric=carbon|distance&window=...&from&to
 router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const windowStr = String(req.query.window || '30d').toLowerCase();
-    const metric = String(req.query.metric || 'carbon').toLowerCase(); // 'carbon' | 'distance'
-    const whereWindow = parseWindowToSql(windowStr);
+    const metric = String(req.query.metric || 'carbon').toLowerCase();
+    const { window, from, to } = req.query;
+    const whereWindow = whereByWindowOrRange({ window, from, to });
     const metricExpr = metric === 'distance' ? 'distance_km' : 'carbonReduce';
 
     const [rows] = await db.query(`
@@ -372,105 +397,134 @@ router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) =
       name: (r.name || '').trim() || r.email || `user_${r.user_id}`,
       total: Number(r.total_value || 0)
     }));
-    res.json({ success: true, data, meta: { window: windowStr, metric } });
+    res.json({ success: true, data, meta: { window, metric, from, to } });
   } catch (err) {
     console.error('GET /admin/insights/leaderboard error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
 
-/* ====================== NEW: Admin Activity (fix 404) ====================== */
-/**
- * GET /admin/activity?user_id=24&type=all|walk|bike&limit=20&offset=0
- * รวมกิจกรรมจาก walk_history + bic_history
- */
+/* ====================== Recent Activities (NEW, all users) ====================== */
+// GET /admin/recent-activities?window=7d&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=50
+router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { window, from, to } = req.query;
+    const limit = Math.min(Number(req.query.limit || 50), 200);
+    const whereTime = whereByWindowOrRange({ window, from, to });
+
+    const [rows] = await db.query(`
+      SELECT * FROM (
+        SELECT
+          w.id AS id,
+          w.user_id,
+          CONCAT(COALESCE(u.fname,''), ' ', COALESCE(u.lname,'')) AS name,
+          u.email,
+          'walk' AS type,
+          w.distance_km,
+          w.carbonReduce,
+          (CASE WHEN w.duration_sec IS NOT NULL AND w.duration_sec > 0 AND w.distance_km IS NOT NULL
+                THEN (w.distance_km / (w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+          w.record_date
+        FROM walk_history w
+        JOIN users u ON u.user_id = w.user_id
+        WHERE ${whereTime}
+        UNION ALL
+        SELECT
+          b.id AS id,
+          b.user_id,
+          CONCAT(COALESCE(u.fname,''), ' ', COALESCE(u.lname,'')) AS name,
+          u.email,
+          'bike' AS type,
+          b.distance_km,
+          b.carbonReduce,
+          (CASE WHEN b.duration_sec IS NOT NULL AND b.duration_sec > 0 AND b.distance_km IS NOT NULL
+                THEN (b.distance_km / (b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+          b.record_date
+        FROM bic_history b
+        JOIN users u ON u.user_id = b.user_id
+        WHERE ${whereTime}
+      ) x
+      ORDER BY record_date DESC
+      LIMIT ${limit}
+    `);
+
+    const data = rows.map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      name: (r.name || '').trim() || r.email || `user_${r.user_id}`,
+      type: r.type,
+      distance_km: Number(r.distance_km || 0),
+      carbon: Number(r.carbonReduce || 0),
+      pace_kmh: r.pace_kmh == null ? null : Number(r.pace_kmh),
+      record_date: r.record_date
+    }));
+
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error('GET /admin/recent-activities error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+/* ====================== Existing: Admin Activity by user (kept) ====================== */
+// GET /admin/activity?user_id=24&type=all|walk|bike&limit=20&offset=0
 router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const userId = Number(req.query.user_id || 0);
-    const type = String(req.query.type || 'all').toLowerCase(); // all|walk|bike
+    const type = String(req.query.type || 'all').toLowerCase();
     const limit = Math.max(1, Math.min(100, Number(req.query.limit || 20)));
     const offset = Math.max(0, Number(req.query.offset || 0));
-
     if (!userId) return res.status(400).json({ message: 'user_id is required' });
 
-    // --- Build UNION + where ---
     const parts = [];
     const vals = [];
     if (type === 'all' || type === 'walk') {
       parts.push(`
-        SELECT
-          'walk' AS act_type,
-          id, user_id,
-          distance_km,
-          duration_sec,
-          carbonReduce,
-          record_date
-        FROM walk_history
-        WHERE user_id = ?
+        SELECT 'walk' AS act_type, id, user_id, distance_km, duration_sec, carbonReduce, record_date
+        FROM walk_history WHERE user_id = ?
       `);
       vals.push(userId);
     }
     if (type === 'all' || type === 'bike' || type === 'bic' || type === 'bicycle') {
       parts.push(`
-        SELECT
-          'bike' AS act_type,
-          id, user_id,
-          distance_km,
-          duration_sec,
-          carbonReduce,
-          record_date
-        FROM bic_history
-        WHERE user_id = ?
+        SELECT 'bike' AS act_type, id, user_id, distance_km, duration_sec, carbonReduce, record_date
+        FROM bic_history WHERE user_id = ?
       `);
       vals.push(userId);
-    }
-
-    if (parts.length === 0) {
-      return res.json({ success: true, data: [], meta: { total: 0, limit, offset } });
     }
 
     const unionSql = parts.join(' UNION ALL ');
     const listSql = `
       SELECT
-        act_type AS type,
-        id,
-        user_id,
+        act_type AS type, id, user_id,
         COALESCE(distance_km,0) AS distance_km,
         COALESCE(carbonReduce,0) AS carbonReduce,
         COALESCE(duration_sec,0) AS duration_sec,
         (CASE WHEN duration_sec IS NOT NULL AND duration_sec > 0
               THEN (distance_km / (duration_sec/3600)) ELSE NULL END) AS pace_kmh,
-        (duration_sec/3600.0) AS duration_h,
         record_date
       FROM ( ${unionSql} ) t
       ORDER BY record_date DESC
-      LIMIT ? OFFSET ?;
+      LIMIT ? OFFSET ?
     `;
-
     const countSql = `
       SELECT SUM(cnt) AS total FROM (
         ${parts.map(p => `SELECT COUNT(*) AS cnt FROM (${p}) _t`).join(' UNION ALL ')}
-      ) c;
+      ) c
     `;
 
-    // query list
     const [listRows] = await db.query(listSql, [...vals, limit, offset]);
-    // query total
     const [countRows] = await db.query(countSql, vals);
     const total = Number(countRows[0]?.total || 0);
-
-    // map response
     const data = listRows.map(r => ({
       type: r.type,
       id: r.id,
       user_id: r.user_id,
       distance_km: Number(r.distance_km || 0),
       carbonReduce: Number(r.carbonReduce || 0),
-      duration_h: r.duration_h == null ? null : Number(r.duration_h),
       pace_kmh: r.pace_kmh == null ? null : Number(r.pace_kmh),
-      record_date: r.record_date, // datetime
+      record_date: r.record_date,
     }));
-
     res.json({ success: true, data, meta: { total, limit, offset } });
   } catch (err) {
     console.error('GET /admin/activity error:', err);
@@ -478,10 +532,8 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Rewards Management ====================== */
+/* ====================== Rewards (kept) ====================== */
 const REWARD_TABLE = 'reward';
-
-// List
 router.get('/rewards', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -498,12 +550,9 @@ router.get('/rewards', verifyToken, verifyAdmin, async (req, res) => {
     res.status(500).json({ message: 'DB error on rewards list' });
   }
 });
-
-// Create
 router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
   try {
     let { title, description, image_url, cost_points, expires_at, active, stock } = req.body;
-
     title = String(title || '').slice(0, 120);
     description = description ?? '';
     image_url = image_url ? String(image_url).slice(0, 255) : null;
@@ -534,13 +583,10 @@ router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
     res.status(500).json({ message: 'DB error on reward create' });
   }
 });
-
-// Update
 router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     let { title, description, image_url, cost_points, expires_at, active, stock } = req.body;
-
     const fields = [];
     const values = [];
     if (title !== undefined) { fields.push('title = ?'); values.push(String(title).slice(0,120)); }
@@ -550,7 +596,6 @@ router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
     if (expires_at !== undefined) { fields.push('expires_at = ?'); values.push(expires_at || null); }
     if (active !== undefined) { fields.push('active = ?'); values.push(Number(active) ? 1 : 0); }
     if (stock !== undefined) { fields.push('stock = ?'); values.push(Number(stock) || 0); }
-
     if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
     fields.push('updated_at = NOW()');
 
@@ -558,7 +603,6 @@ router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
       `UPDATE ${REWARD_TABLE} SET ${fields.join(', ')} WHERE id = ?`,
       [...values, id]
     );
-
     const [rows] = await db.query(`
       SELECT
         id, title, description, image_url, cost_points,
@@ -567,15 +611,12 @@ router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
       FROM ${REWARD_TABLE}
       WHERE id = ?
     `, [id]);
-
     res.json({ success: true, data: rows[0] || null });
   } catch (err) {
     console.error('PUT /admin/rewards/:id error:', err);
     res.status(500).json({ message: 'DB error on reward update' });
   }
 });
-
-// Toggle active
 router.patch('/rewards/:id/toggle', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -586,8 +627,6 @@ router.patch('/rewards/:id/toggle', verifyToken, verifyAdmin, async (req, res) =
     res.status(500).json({ message: 'DB error on toggle' });
   }
 });
-
-// Delete
 router.delete('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
