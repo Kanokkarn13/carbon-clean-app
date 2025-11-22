@@ -1,20 +1,23 @@
 // src/screens/Home.tsx
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
-  ImageBackground,
   Image,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  Animated,
+  Easing,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList, User as StackUser } from './HomeStack';
+import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 
 import RecentActivityList from '../components/RecentActivityList';
 import { evaluateActivityPoints, sumActivityPoints } from '../utils/points';
@@ -249,6 +252,120 @@ function formatWhen(record_date: any): string {
 }
 /** ----------------------------------------------------- */
 
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+const { width: screenWidth } = Dimensions.get('window');
+const LIQUID_CONTAINER_HEIGHT = 220;
+
+type WaveProps = {
+  height?: number;
+  bottom?: number;
+  amplitude?: number;
+  wavelength?: number;
+};
+
+function LiquidWaves({
+  height = 200,
+  bottom = -40,
+  amplitude = 18,
+  wavelength = 200,
+}: WaveProps) {
+  const anim1 = useRef(new Animated.Value(0)).current;
+  const anim2 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loops = [
+      Animated.loop(
+        Animated.timing(anim1, {
+          toValue: 1,
+          duration: 4800,
+          easing: Easing.linear,
+          useNativeDriver: true,
+          delay: 0,
+        })
+      ),
+      Animated.loop(
+        Animated.timing(anim2, {
+          toValue: 1,
+          duration: 6200,
+          easing: Easing.linear,
+          useNativeDriver: true,
+          delay: 300,
+        })
+      ),
+    ];
+
+    loops.forEach((l) => l.start());
+
+    return () => {
+      loops.forEach((l) => l.stop());
+      anim1.stopAnimation();
+      anim2.stopAnimation();
+      anim1.setValue(0);
+      anim2.setValue(0);
+    };
+  }, [anim1, anim2]);
+
+  const waveWidth = screenWidth + wavelength * 2;
+
+  const translateX1 = anim1.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -wavelength],
+  });
+  const translateX2 = anim2.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-wavelength / 2, -wavelength * 1.5],
+  });
+
+  // Build a smooth sine-like wave using small steps
+  const baseY = height * 0.55;
+  const step = 12;
+  const pts: string[] = [`M0 ${baseY}`];
+  for (let x = 0; x <= waveWidth + wavelength; x += step) {
+    const rad = (x / wavelength) * Math.PI * 2;
+    const y = baseY + Math.sin(rad) * amplitude;
+    pts.push(`L ${x} ${y}`);
+  }
+  pts.push(`L ${waveWidth + wavelength} ${height}`, `L 0 ${height}`, 'Z');
+  const wavePath = pts.join(' ');
+
+  const WaveSvg = ({ id }: { id: string }) => (
+    <Svg width={waveWidth} height={height}>
+      <Defs>
+        <LinearGradient id={`waveGrad-${id}`} x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0%" stopColor="#36c487" stopOpacity="0.8" />
+          <Stop offset="100%" stopColor="#1f9e6f" stopOpacity="0.95" />
+        </LinearGradient>
+      </Defs>
+      <Path d={wavePath} fill={`url(#waveGrad-${id})`} />
+    </Svg>
+  );
+
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { overflow: 'hidden', borderRadius: 16 }]}>
+      <Animated.View
+        style={{
+          position: 'absolute',
+          bottom,
+          transform: [{ translateX: translateX1 }],
+          opacity: 0.8,
+        }}
+      >
+        <WaveSvg id="front" />
+      </Animated.View>
+      <Animated.View
+        style={{
+          position: 'absolute',
+          bottom: bottom - 6,
+          transform: [{ translateX: translateX2 }],
+          opacity: 0.55,
+        }}
+      >
+        <WaveSvg id="back" />
+      </Animated.View>
+    </View>
+  );
+}
+
 const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const route = useRoute<any>();
   const routeUser = route?.params?.user as HomeUser | undefined;
@@ -465,6 +582,8 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const diff = totalReduction - totalEmission;
   const diffColor = diff >= 0 ? styles.statPositive : styles.statNegative;
   const diffText = `${diff.toFixed(2)} kgCO₂e`;
+  const waveHeight = 260; // taller waves
+  const waveBottom = -20; // let waves extend to the bottom
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -476,7 +595,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
               source={{
                 uri:
                   user?.profile_picture ||
-                  'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+                  'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
               }}
               style={styles.avatar}
             />
@@ -502,14 +621,12 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
           </TouchableOpacity>
         </View>
 
-        {/* Task / Goal card (fixed banner background) */}
-        <View style={[styles.card, { padding: 0, borderRadius: 16, overflow: 'hidden' }]}>
-          <ImageBackground
-            source={require('../../assets/trees.png')}
-            resizeMode="cover"
-            style={{ minHeight: 170, paddingHorizontal: 20, paddingVertical: 24, justifyContent: 'center' }}
-            imageStyle={{ borderRadius: 16 }}
-          >
+        {/* Task / Goal card with liquid wave background */}
+        <View style={[styles.card, styles.liquidCard]}>
+          <View style={styles.waveOverlay} pointerEvents="none">
+            <LiquidWaves height={waveHeight} bottom={waveBottom} />
+          </View>
+          <View style={styles.liquidContent}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ flexShrink: 1 }}>
                 <Text style={styles.cardTitle}>Complete your tasks</Text>
@@ -552,7 +669,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
               </View>
 
               <TouchableOpacity
-                style={styles.pillBtn}
+                style={[styles.pillBtn, { marginTop: 12 }]}
                 onPress={() => (navigation as any).navigate('SetGoal', { user })}
                 activeOpacity={0.9}
               >
@@ -560,7 +677,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
                 <Text style={styles.pillBtnText}>Set your goal</Text>
               </TouchableOpacity>
             </View>
-          </ImageBackground>
+          </View>
         </View>
 
         {/* Quick actions */}
@@ -676,6 +793,23 @@ const styles = StyleSheet.create({
     backgroundColor: theme.card, borderRadius: 16, padding: 16, marginTop: 16,
     shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 }, elevation: 3
+  },
+  liquidCard: {
+    padding: 0,
+    overflow: 'hidden',
+    backgroundColor: 'transparent',
+    minHeight: LIQUID_CONTAINER_HEIGHT,
+  },
+  waveOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+    borderRadius: 16,
+  },
+  liquidContent: {
+    position: 'relative',
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+    minHeight: 200,
   },
   cardTitle: { color: theme.text, fontWeight: '700', fontSize: 16 },
 

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { saveUser } from '../services/authService';
 
 type User = {
   user_id: number;
@@ -82,6 +83,11 @@ const SetGoalScreen: React.FC = () => {
 
       const result = await response.json();
       if (response.ok) {
+        const updatedUser =
+          goalType === 'walking'
+            ? { ...user, walk_goal: km }
+            : { ...user, bic_goal: km };
+        await saveUser(updatedUser);
         Alert.alert('✅ Goal Saved', `${goalType} set to ${km} km`);
       } else {
         Alert.alert('Error', result.message || 'Failed to save goal');

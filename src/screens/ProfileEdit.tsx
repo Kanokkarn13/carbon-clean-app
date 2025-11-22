@@ -243,7 +243,7 @@ const ProfileEdit = () => {
               source={{
                 uri:
                   profileUri ||
-                  'https://preview.redd.it/help-me-find-instagram-account-of-this-cat-he-she-looks-so-v0-twu4der3mpud1.jpg?width=640&crop=smart&auto=webp&s=e50ba618c5b563dc1dc37dc98e6fb8c29276dafd',
+                  'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
               }}
               style={styles.avatar}
             />

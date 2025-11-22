@@ -70,7 +70,7 @@ const RedeemHistoryScreen: React.FC<Props> = ({ route, navigation }) => {
     () =>
       user?.profile_picture && user.profile_picture.trim()
         ? user.profile_picture
-        : 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+        : 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_1280.png',
     [user?.profile_picture]
   );
   const userName = useMemo(() => {
