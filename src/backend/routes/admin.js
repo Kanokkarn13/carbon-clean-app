@@ -1,4 +1,3 @@
-// src/backend/routes/admin.js
 const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
@@ -66,6 +65,7 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// Minimal list
 router.get('/users/min', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
@@ -158,7 +158,7 @@ router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Summary API (รวม activity) ====================== */
+/* ====================== Summary API (คงเดิม) ====================== */
 router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [ovRows] = await db.query(`
@@ -288,7 +288,6 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
 });
 
 /* ====================== Insights APIs (add time filters) ====================== */
-// GET /admin/insights/hourly?type=walk|bike&window=30d&from=YYYY-MM-DD&to=YYYY-MM-DD
 router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { type = 'walk', window, from, to } = req.query;
@@ -313,7 +312,6 @@ router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-// GET /admin/insights/weekday?type=walk|bike&window=...&from&to
 router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { type = 'walk', window, from, to } = req.query;
@@ -338,7 +336,6 @@ router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-// GET /admin/insights/distance_hist?type=walk|bike&window=...&from&to
 router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { type = 'walk', window, from, to } = req.query;
@@ -347,10 +344,7 @@ router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res)
 
     const [rows] = await db.query(`
       SELECT
-        CASE
-          WHEN distance_km >= 20 THEN 20
-          ELSE FLOOR(distance_km)
-        END AS bin,
+        CASE WHEN distance_km >= 20 THEN 20 ELSE FLOOR(distance_km) END AS bin,
         COUNT(*) AS cnt
       FROM ${table}
       WHERE ${whereTime} AND distance_km IS NOT NULL
@@ -368,7 +362,6 @@ router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res)
   }
 });
 
-// GET /admin/insights/leaderboard?metric=carbon|distance&window=...&from&to
 router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const metric = String(req.query.metric || 'carbon').toLowerCase();
@@ -404,8 +397,49 @@ router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) =
   }
 });
 
-/* ====================== Recent Activities (NEW, all users) ====================== */
-// GET /admin/recent-activities?window=7d&from=YYYY-MM-DD&to=YYYY-MM-DD&limit=50
+/* ====================== NEW: Aggregates for Carbon KPIs ====================== */
+// GET /admin/insights/aggregates?window=30d|...&from=YYYY-MM-DD&to=YYYY-MM-DD
+router.get('/insights/aggregates', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { window, from, to } = req.query;
+    const whereTime = whereByWindowOrRange({ window, from, to });
+
+    // factor สำหรับการปล่อยคาร์บอนต่อ 1 กม. (kg CO2e per km)
+    const EF_WALK = Number(process.env.EF_WALK_KG_PER_KM ?? 0);       // เดิน ปกติ 0
+    const EF_BIKE = Number(process.env.EF_BIKE_KG_PER_KM ?? 0.016);   // ปั่นจักรยาน (โดยปกติ ~0.01–0.05)
+
+    // carbon_reduce: sum(carbonReduce)
+    // carbon_emitted: sum(distance_km * EF)
+    const [rows] = await db.query(
+      `
+      SELECT
+        COALESCE((SELECT SUM(w.carbonReduce) FROM walk_history w WHERE ${whereTime}), 0)
+        + COALESCE((SELECT SUM(b.carbonReduce) FROM bic_history  b WHERE ${whereTime}), 0) AS carbon_reduced,
+
+        COALESCE((SELECT SUM(w.distance_km) FROM walk_history w WHERE ${whereTime}), 0) * ? 
+        + COALESCE((SELECT SUM(b.distance_km) FROM bic_history  b WHERE ${whereTime}), 0) * ? AS carbon_emitted
+      `,
+      [EF_WALK, EF_BIKE]
+    );
+
+    const carbon_reduced = Number(rows[0]?.carbon_reduced || 0);
+    const carbon_emitted = Number(rows[0]?.carbon_emitted || 0);
+
+    res.json({
+      success: true,
+      data: {
+        carbon_reduced,
+        carbon_emitted
+      },
+      meta: { window, from, to, EF_WALK, EF_BIKE }
+    });
+  } catch (err) {
+    console.error('GET /admin/insights/aggregates error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+/* ====================== Recent Activities (site-wide) ====================== */
 router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { window, from, to } = req.query;
@@ -415,13 +449,9 @@ router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
     const [rows] = await db.query(`
       SELECT * FROM (
         SELECT
-          w.id AS id,
-          w.user_id,
+          w.id AS id, w.user_id,
           CONCAT(COALESCE(u.fname,''), ' ', COALESCE(u.lname,'')) AS name,
-          u.email,
-          'walk' AS type,
-          w.distance_km,
-          w.carbonReduce,
+          u.email, 'walk' AS type, w.distance_km, w.carbonReduce,
           (CASE WHEN w.duration_sec IS NOT NULL AND w.duration_sec > 0 AND w.distance_km IS NOT NULL
                 THEN (w.distance_km / (w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
           w.record_date
@@ -430,13 +460,9 @@ router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
         WHERE ${whereTime}
         UNION ALL
         SELECT
-          b.id AS id,
-          b.user_id,
+          b.id AS id, b.user_id,
           CONCAT(COALESCE(u.fname,''), ' ', COALESCE(u.lname,'')) AS name,
-          u.email,
-          'bike' AS type,
-          b.distance_km,
-          b.carbonReduce,
+          u.email, 'bike' AS type, b.distance_km, b.carbonReduce,
           (CASE WHEN b.duration_sec IS NOT NULL AND b.duration_sec > 0 AND b.distance_km IS NOT NULL
                 THEN (b.distance_km / (b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
           b.record_date
@@ -466,8 +492,7 @@ router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Existing: Admin Activity by user (kept) ====================== */
-// GET /admin/activity?user_id=24&type=all|walk|bike&limit=20&offset=0
+/* ====================== Existing: Activity by user ====================== */
 router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const userId = Number(req.query.user_id || 0);
@@ -532,15 +557,14 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Rewards (kept) ====================== */
+/* ====================== Rewards (คงเดิม) ====================== */
 const REWARD_TABLE = 'reward';
 router.get('/rewards', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT
-        id, title, description, image_url, cost_points,
-        expires_at, CAST(active AS UNSIGNED) AS active,
-        stock, created_at, updated_at
+      SELECT id, title, description, image_url, cost_points,
+             expires_at, CAST(active AS UNSIGNED) AS active,
+             stock, created_at, updated_at
       FROM ${REWARD_TABLE}
       ORDER BY created_at DESC, id DESC
     `);
@@ -569,10 +593,9 @@ router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
     );
 
     const [rows] = await db.query(`
-      SELECT
-        id, title, description, image_url, cost_points,
-        expires_at, CAST(active AS UNSIGNED) AS active,
-        stock, created_at, updated_at
+      SELECT id, title, description, image_url, cost_points,
+             expires_at, CAST(active AS UNSIGNED) AS active,
+             stock, created_at, updated_at
       FROM ${REWARD_TABLE}
       WHERE id = ?
     `, [result.insertId]);
@@ -604,10 +627,9 @@ router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
       [...values, id]
     );
     const [rows] = await db.query(`
-      SELECT
-        id, title, description, image_url, cost_points,
-        expires_at, CAST(active AS UNSIGNED) AS active,
-        stock, created_at, updated_at
+      SELECT id, title, description, image_url, cost_points,
+             expires_at, CAST(active AS UNSIGNED) AS active,
+             stock, created_at, updated_at
       FROM ${REWARD_TABLE}
       WHERE id = ?
     `, [id]);
