@@ -16,6 +16,7 @@ const shapeUser = (row) => {
     lname: row.lname,
     email: row.email,
     phone: row.phone,
+    profile_picture: row.profile_picture || null,
     vehicle: row.vehicle ?? null,
     house_member: toIntOrNull(row.house_member),
     walk_goal: toIntOrNull(row.walk_goal),
@@ -158,3 +159,6 @@ exports.setGoal = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Server error' });
   }
 };
+
+// Exported for other controllers (e.g., profile picture upload)
+exports.shapeUser = shapeUser;

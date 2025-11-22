@@ -28,6 +28,15 @@ const api = (path: string) => {
   return `${API_BASE}${withApi}`;
 };
 
+const guessMimeType = (name: string) => {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.heic')) return 'image/heic';
+  if (lower.endsWith('.heif')) return 'image/heif';
+  return 'image/jpeg';
+};
+
 /* ========= Types ========= */
 export type ApiUser = {
   user_id: number;
@@ -35,6 +44,7 @@ export type ApiUser = {
   lname: string;
   email: string;
   phone: string;
+  profile_picture?: string | null;
   vehicle?: string | null;
   house_member?: number | null;
   walk_goal?: number | null;
@@ -146,6 +156,42 @@ export const setGoal = (payload: {
   goalType: 'walking' | 'bicycle' | string;
   value: number;
 }) => request<BasicResponse<ApiUser>>('/set-goal', payload);
+
+// 🖼️ Upload profile picture
+export const uploadProfileImage = async (
+  userId: number,
+  uri: string
+): Promise<BasicResponse<{ url: string; user?: ApiUser }>> => {
+  const url = api(`/users/${userId}/profile-picture`);
+  const nameFromUri = uri.split('/').pop() || `profile-${Date.now()}.jpg`;
+  const name = nameFromUri.includes('.') ? nameFromUri : `${nameFromUri}.jpg`;
+  const form = new FormData();
+
+  form.append('file', {
+    uri,
+    name,
+    type: guessMimeType(name),
+  } as any);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+    body: form,
+  });
+
+  const contentType = res.headers.get('Content-Type') || '';
+  const isJson = contentType.toLowerCase().includes('application/json');
+  const body = isJson ? await res.json().catch(() => null) : await res.text().catch(() => '');
+
+  if (!res.ok || (body && typeof body === 'object' && body.success === false)) {
+    const message =
+      (body && typeof body === 'object' && (body.message || body.error)) ||
+      (typeof body === 'string' ? body : `HTTP ${res.status}`);
+    throw new Error(message);
+  }
+
+  return body as BasicResponse<{ url: string; user?: ApiUser }>;
+};
 
 /* ========= Helper ========= */
 export function pickUser(

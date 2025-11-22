@@ -12,7 +12,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { updateUser } from '../services/authService';
+import * as ImagePicker from 'expo-image-picker';
+import { pickUser, saveUser, updateUser, uploadProfileImage } from '../services/authService';
 import { emissionData } from '../hooks/calculateEmission';
 
 const theme = {
@@ -91,6 +92,7 @@ const ProfileEdit = () => {
   const route = useRoute();
   const { user } = (route.params as { user: any }) || {};
 
+  const [profileUri, setProfileUri] = useState<string | null>(user.profile_picture || null);
   const [fname, setFname] = useState(String(user.fname || ''));
   const [lname, setLname] = useState(String(user.lname || ''));
   const [email, setEmail] = useState(String(user.email || ''));
@@ -100,6 +102,7 @@ const ProfileEdit = () => {
   const [vehicleType, setVehicleType] = useState<(typeof VEHICLE_TYPES)[number]>('Cars');
   const [fuelType, setFuelType] = useState<(typeof FUEL_TYPES)[number]>('Petrol');
   const [vehicleClass, setVehicleClass] = useState<string>('Small car');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (typeof user.vehicle === 'string' && user.vehicle.includes(',')) {
@@ -138,6 +141,38 @@ const ProfileEdit = () => {
 
   const onChangeClass = (cls: string) => setVehicleClass(cls);
 
+  const handlePickImage = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        const msg = perm.canAskAgain
+          ? 'Please allow photo library access to change your picture.'
+          : 'Photo access is blocked. Enable it in Settings to change your picture.';
+        Alert.alert('Permission needed', msg);
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        // Some clients require lowercase string enums; use raw value for compatibility.
+        mediaTypes: ['images'] as any,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.canceled) return;
+      const asset = result.assets?.[0];
+      if (asset?.uri) {
+        setProfileUri(asset.uri);
+      } else {
+        Alert.alert('No image selected', 'Please choose an image to use as your profile picture.');
+      }
+    } catch (err) {
+      console.error('Image picker error', err);
+      Alert.alert('Image picker error', 'Could not open the photo library. Please try again.');
+    }
+  };
+
   const handleSave = async () => {
     const vehicleString =
       vehicleType === 'Cars'
@@ -154,14 +189,43 @@ const ProfileEdit = () => {
       house_member: parseInt(houseMember || '0', 10),
     };
 
+    setSaving(true);
     try {
-      await updateUser(userData);
+      let latestUser = { ...user, profile_picture: profileUri ?? null };
+
+      if (profileUri && profileUri !== user.profile_picture) {
+        try {
+          const uploaded = await uploadProfileImage(user.user_id, profileUri);
+          const updatedUser = uploaded?.data?.user;
+          const uploadedUrl = uploaded?.data?.url;
+          latestUser = updatedUser || { ...latestUser, profile_picture: uploadedUrl || profileUri };
+        } catch (err: any) {
+          console.error('❌ Failed to upload image', err);
+          Alert.alert(
+            'Upload failed',
+            `${err?.message || err || 'Could not upload photo'}`,
+          );
+          setSaving(false);
+          return;
+        }
+      }
+
+      const updatedResp = await updateUser(userData);
+      const updatedUser = pickUser(updatedResp);
+      const mergedUser = { ...(latestUser || user), ...(updatedUser || {}) };
+
+      if (mergedUser) {
+        await saveUser(mergedUser);
+      }
+
       Alert.alert('✅ Success', 'Profile updated successfully.', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch (error) {
       console.error('❌ Failed to update user:', error);
       Alert.alert('Error', 'Failed to update profile.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -174,14 +238,20 @@ const ProfileEdit = () => {
 
         {/* Avatar */}
         <Card title="Your Info" icon="person-circle-outline">
-          <Image
-            source={{
-              uri:
-                user.profile_picture ||
-                'https://preview.redd.it/help-me-find-instagram-account-of-this-cat-he-she-looks-so-v0-twu4der3mpud1.jpg?width=640&crop=smart&auto=webp&s=e50ba618c5b563dc1dc37dc98e6fb8c29276dafd',
-            }}
-            style={styles.avatar}
-          />
+          <TouchableOpacity onPress={handlePickImage} activeOpacity={0.85} style={styles.avatarWrap}>
+            <Image
+              source={{
+                uri:
+                  profileUri ||
+                  'https://preview.redd.it/help-me-find-instagram-account-of-this-cat-he-she-looks-so-v0-twu4der3mpud1.jpg?width=640&crop=smart&auto=webp&s=e50ba618c5b563dc1dc37dc98e6fb8c29276dafd',
+              }}
+              style={styles.avatar}
+            />
+            <View style={styles.avatarBadge}>
+              <Ionicons name="camera" color="#fff" size={16} />
+            </View>
+          </TouchableOpacity>
+          <Text style={styles.helperText}>Tap to change your profile picture</Text>
           <LabeledInput label="First Name" value={fname} onChangeText={setFname} placeholder="First name" />
           <LabeledInput label="Last Name" value={lname} onChangeText={setLname} placeholder="Last name" />
           <LabeledInput
@@ -238,8 +308,13 @@ const ProfileEdit = () => {
           />
         </Card>
 
-        <TouchableOpacity style={styles.primaryBtn} onPress={handleSave} activeOpacity={0.9}>
-          <Text style={styles.primaryBtnText}>Save Changes</Text>
+        <TouchableOpacity
+          style={[styles.primaryBtn, saving && { opacity: 0.7 }]}
+          onPress={handleSave}
+          disabled={saving}
+          activeOpacity={0.9}
+        >
+          <Text style={styles.primaryBtnText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -274,11 +349,35 @@ const styles = StyleSheet.create({
   avatar: {
     width: 96,
     height: 96,
-    borderRadius: 24,
+    borderRadius: 48,
     borderWidth: 2,
     borderColor: theme.primary,
     alignSelf: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
+  },
+  avatarWrap: { alignSelf: 'center', marginBottom: 6 },
+  avatarBadge: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    backgroundColor: theme.primary,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: theme.card,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  helperText: {
+    fontSize: 12,
+    color: theme.sub,
+    textAlign: 'center',
+    marginBottom: 4,
   },
   label: { color: theme.sub, fontSize: 13, marginBottom: 6 },
   inputWrap: {

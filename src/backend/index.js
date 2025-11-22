@@ -23,6 +23,7 @@ const {
   listReductions,
   deleteReduction,
 } = require('./controllers/saveReductionController');
+const profileRoutes = require('./routes/profileRoutes');
 
 const app = express();
 
@@ -77,6 +78,9 @@ app.post('/api/reduction', saveReduction);
 app.get('/api/reduction/:user_id', listReductions);        // legacy
 app.get('/api/reduction/saved/:user_id', listReductions);  // new (your app uses this)
 app.delete('/api/reduction/:id', deleteReduction);
+
+/* -------------------- Profile -------------------- */
+app.use('/api', profileRoutes);
 
 /* -------------------- Recent Activity (walking/cycling history) -------------------- */
 app.use('/api', activityRoutes);

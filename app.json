@@ -26,7 +26,13 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Carbon Clean to access your photos so you can update your profile picture."
+        }
+      ]
     ],
     "extra": {
       "eas": {
