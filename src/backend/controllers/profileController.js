@@ -48,9 +48,13 @@ const uploadProfilePicture = [
       });
     } catch (err) {
       console.error('❌ Upload profile picture error:', err);
+      const message =
+        err?.message === 'S3 bucket is not configured (missing S3_BUCKET)'
+          ? 'Server is missing S3 bucket config. Please set S3_BUCKET and restart.'
+          : err?.message || 'Failed to upload profile picture';
       return res.status(500).json({
         success: false,
-        message: err?.message || 'Failed to upload profile picture',
+        message,
       });
     }
   },
