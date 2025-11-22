@@ -41,9 +41,33 @@ async function uploadToS3(buffer, key, contentType = 'application/octet-stream')
   };
 
   const result = await s3.upload(params).promise();
-  return result.Location;
+  return { location: result.Location, key: result.Key };
+}
+
+/**
+ * Generate a signed URL to GET an object.
+ * @param {string} key
+ * @param {number} expiresSeconds
+ * @returns {Promise<string>}
+ */
+async function getSignedUrlForKey(key, expiresSeconds = 60 * 60 * 24 * 7) {
+  if (!bucketName) {
+    throw new Error('S3 bucket is not configured (missing S3_BUCKET)');
+  }
+  const params = {
+    Bucket: bucketName,
+    Key: key,
+    Expires: expiresSeconds,
+  };
+  return new Promise((resolve, reject) => {
+    s3.getSignedUrl('getObject', params, (err, url) => {
+      if (err || !url) return reject(err || new Error('Failed to sign URL'));
+      resolve(url);
+    });
+  });
 }
 
 module.exports = {
   uploadToS3,
+  getSignedUrlForKey,
 };

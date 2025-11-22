@@ -1,7 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const db = require('../config/db');
-const { uploadToS3 } = require('../config/s3');
+const { uploadToS3, getSignedUrlForKey } = require('../config/s3');
 const { shapeUser } = require('./authController');
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -34,17 +34,18 @@ const uploadProfilePicture = [
       const safeExt = parsed.ext || '.jpg';
       const key = `profilepicture/user-${user_id}-${Date.now()}-${safeName}${safeExt}`;
 
-      const url = await uploadToS3(req.file.buffer, key, req.file.mimetype);
+      const { key: uploadedKey } = await uploadToS3(req.file.buffer, key, req.file.mimetype);
+      const signedUrl = await getSignedUrlForKey(uploadedKey);
 
-      await db.query('UPDATE users SET profile_picture = ? WHERE user_id = ?', [url, user_id]);
+      await db.query('UPDATE users SET profile_picture = ? WHERE user_id = ?', [uploadedKey, user_id]);
 
       const [rows] = await db.query('SELECT * FROM users WHERE user_id = ? LIMIT 1', [user_id]);
-      const user = shapeUser(rows[0]);
+      const user = await shapeUser(rows[0]);
 
       return res.json({
         success: true,
         message: 'Profile picture updated',
-        data: { url, user },
+        data: { url: signedUrl, user },
       });
     } catch (err) {
       console.error('❌ Upload profile picture error:', err);

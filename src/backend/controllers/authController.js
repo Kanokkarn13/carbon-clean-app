@@ -1,6 +1,7 @@
 // controllers/authController.js
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
+const { getSignedUrlForKey } = require('../config/s3');
 
 /* ------------------------------- Helpers ------------------------------- */
 const toIntOrNull = (v) => {
@@ -8,15 +9,23 @@ const toIntOrNull = (v) => {
   return Number.isFinite(n) ? Math.floor(n) : null;
 };
 
-const shapeUser = (row) => {
+const shapeUser = async (row) => {
   if (!row) return null;
+  let profileUrl = row.profile_picture || null;
+  if (profileUrl && !/^https?:\/\//i.test(profileUrl)) {
+    try {
+      profileUrl = await getSignedUrlForKey(profileUrl);
+    } catch (e) {
+      console.warn('⚠️  Failed to sign profile picture URL:', e?.message || e);
+    }
+  }
   return {
     user_id: row.user_id,
     fname: row.fname,
     lname: row.lname,
     email: row.email,
     phone: row.phone,
-    profile_picture: row.profile_picture || null,
+    profile_picture: profileUrl || null,
     vehicle: row.vehicle ?? null,
     house_member: toIntOrNull(row.house_member),
     walk_goal: toIntOrNull(row.walk_goal),
@@ -51,7 +60,7 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
-    const safeUser = shapeUser(user);
+    const safeUser = await shapeUser(user);
     return res.json({ success: true, message: 'Login successful', data: safeUser });
   } catch (err) {
     console.error('❌ Error during login:', err.message);
@@ -91,7 +100,7 @@ exports.register = async (req, res) => {
     // fetch & shape created user
     const insertedId = result.insertId;
     const [rows] = await db.query('SELECT * FROM users WHERE user_id = ? LIMIT 1', [insertedId]);
-    const safeUser = shapeUser(rows[0]);
+    const safeUser = await shapeUser(rows[0]);
 
     return res.status(201).json({
       success: true,
@@ -124,7 +133,7 @@ exports.updateUser = async (req, res) => {
     await db.query(query, [fname, lname, email, phone, vehicle ?? null, hm, user_id]);
 
     const [rows] = await db.query('SELECT * FROM users WHERE user_id = ? LIMIT 1', [user_id]);
-    const safeUser = shapeUser(rows[0]);
+    const safeUser = await shapeUser(rows[0]);
 
     return res.json({ success: true, message: 'User updated successfully', data: safeUser });
   } catch (err) {
@@ -151,7 +160,7 @@ exports.setGoal = async (req, res) => {
     ]);
 
     const [rows] = await db.query('SELECT * FROM users WHERE user_id = ? LIMIT 1', [user_id]);
-    const safeUser = shapeUser(rows[0]);
+    const safeUser = await shapeUser(rows[0]);
 
     return res.json({ success: true, message: 'Goal updated', data: safeUser });
   } catch (err) {

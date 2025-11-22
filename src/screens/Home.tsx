@@ -18,6 +18,7 @@ import type { RootStackParamList, User as StackUser } from './HomeStack';
 
 import RecentActivityList from '../components/RecentActivityList';
 import { evaluateActivityPoints, sumActivityPoints } from '../utils/points';
+import { getUser as getStoredUser } from '../services/authService';
 
 type HomeNav = NativeStackNavigationProp<RootStackParamList, any>;
 
@@ -251,9 +252,9 @@ function formatWhen(record_date: any): string {
 const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const route = useRoute<any>();
   const routeUser = route?.params?.user as HomeUser | undefined;
-  const user = userProp ?? routeUser;
   const isFocused = useIsFocused();
 
+  const [user, setUser] = useState<HomeUser | undefined>(userProp ?? routeUser);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(false);
   const [progressType, setProgressType] = useState<ActivityType>('Walking');
@@ -270,6 +271,23 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
     const v = user.user_id ?? (user as any).id;
     return v != null ? String(v) : undefined;
   }, [user]);
+
+  useEffect(() => {
+    let mounted = true;
+    const syncUser = async () => {
+      const stored = await getStoredUser().catch(() => null);
+      if (!mounted) return;
+      const latest = (stored as HomeUser) || routeUser || userProp;
+      if (!latest) return;
+      if (!user || JSON.stringify(user) !== JSON.stringify(latest)) {
+        setUser(latest);
+      }
+    };
+    syncUser();
+    return () => {
+      mounted = false;
+    };
+  }, [isFocused, routeUser, userProp]);
 
   const fetchEmissionTotal = useCallback(async () => {
     if (!uid) {
