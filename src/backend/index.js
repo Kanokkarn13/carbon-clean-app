@@ -44,6 +44,9 @@ app.use((req, _res, next) => {
   try {
     await db.query('SELECT 1'); // simple ping
     console.log('✅ Successfully connected to the database!');
+    if (typeof db.ensureProfilePictureColumn === 'function') {
+      await db.ensureProfilePictureColumn();
+    }
   } catch (err) {
     console.error('❌ Failed to connect to DB:', err);
   }

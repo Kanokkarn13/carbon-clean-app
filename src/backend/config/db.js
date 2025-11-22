@@ -31,4 +31,23 @@ const pool = mysql.createPool({
   }
 })();
 
+async function ensureProfilePictureColumn() {
+  try {
+    const sql = `
+      ALTER TABLE users
+      ADD COLUMN profile_picture VARCHAR(512) NULL DEFAULT NULL
+    `;
+    await pool.query(sql);
+    console.log('✅ Added users.profile_picture column');
+  } catch (err) {
+    // Ignore "duplicate column" error (ER_DUP_FIELDNAME = 1060)
+    if (err && err.errno === 1060) {
+      console.log('ℹ️  users.profile_picture already exists');
+    } else {
+      console.error('❌ Failed to ensure profile_picture column:', err.message);
+    }
+  }
+}
+
 module.exports = pool;
+module.exports.ensureProfilePictureColumn = ensureProfilePictureColumn;
