@@ -322,7 +322,7 @@ export default function Dashboard() {
                       name: 'Reduction',
                       population: Math.max(0.0001, pieReduction),
                       color: 'rgba(16, 185, 129, 0.9)',
-                      legendFontColor: '#10B981',
+                      legendFontColor: '#07F890',
                       legendFontSize: 14,
                     },
                   ]}

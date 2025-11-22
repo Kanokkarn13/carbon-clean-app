@@ -22,7 +22,7 @@ export default function ProfileStack({ route }: any) {
         component={ProfileEdit}
         options={{
           title: 'Edit Profile',
-          headerTintColor: '#22C55E',
+          headerTintColor: '#07F890',
           headerTitleStyle: { fontWeight: '700' },
           headerShadowVisible: false,
         }}

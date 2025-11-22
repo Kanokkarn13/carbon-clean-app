@@ -27,8 +27,8 @@ type Navigation = NativeStackNavigationProp<any>;
 type TrackingScreenProps = { user: any };
 
 const theme = {
-  primary: '#10B981',
-  primaryDark: '#059669',
+  primary: '#07F890',
+  primaryDark: '#05C76E',
   bg: '#F6FAF8',
   card: '#FFFFFF',
   text: '#0B1721',
@@ -198,7 +198,7 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                 {routePoints.length > 0 && (
                   <Marker
                     coordinate={routePoints[0]}
-                    pinColor="#10B981"
+                    pinColor="#07F890"
                     title="Start"
                   />
                 )}

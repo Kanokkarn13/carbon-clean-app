@@ -31,8 +31,8 @@ const API_BASE = RAW_BASE.replace(/\/+$/, '');
 const api = (p: string) => `${API_BASE}/api${p}`;
 
 const theme = {
-  primary: '#10B981',
-  primaryDark: '#059669',
+  primary: '#07F890',
+  primaryDark: '#05C76E',
   bg: '#F6FAF8',
   card: '#FFFFFF',
   text: '#0B1721',
@@ -45,7 +45,7 @@ const theme = {
 
 // === brand colors for icons/values ===
 const COLORS = {
-  green: '#22C55E',  // carbon
+  green: '#07F890',  // carbon
   blue:  '#3B82F6',  // distance
   teal:  '#14B8A6',  // duration
   yellow:'#F59E0B',  // steps
@@ -391,7 +391,7 @@ const RecentAct: React.FC = () => {
                 {Marker && routePoints.length > 0 ? (
                   <Marker
                     coordinate={routePoints[0]}
-                    pinColor="#10B981"
+                    pinColor="#07F890"
                     title="Start"
                   />
                 ) : null}

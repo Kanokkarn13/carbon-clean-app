@@ -47,8 +47,8 @@ if (__DEV__) {
 }
 
 const theme = {
-  green: '#10B981',
-  greenDark: '#059669',
+  green: '#07F890',
+  greenDark: '#05C76E',
   bg: '#F6FAF8',
   card: '#FFFFFF',
   text: '#0B1721',

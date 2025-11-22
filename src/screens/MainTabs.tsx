@@ -15,7 +15,7 @@ const MainTabs: React.FC<MainTabsProps> = ({ user, onLogout }) => {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: '#22C55E',
+        tabBarActiveTintColor: '#07F890',
         tabBarInactiveTintColor: '#9CA3AF',
         tabBarIcon: ({ color, size }) => {
           let iconName: any;

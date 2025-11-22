@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { formatRelativeTime } from '../utils/format';
 
 export type ActivityType = 'Cycling' | 'Walking';
 export type Activity = {
@@ -15,8 +16,8 @@ export type Activity = {
 };
 
 const theme = {
-  primary: '#10B981',
-  primaryDark: '#059669',
+  primary: '#07F890',
+  primaryDark: '#05C76E',
   bg: '#F6FAF8',
   card: '#FFFFFF',
   text: '#0B1721',
@@ -80,6 +81,7 @@ const fmtWhen = (dateLike?: string | number | Date) => {
 
 export default function RecentActCard({ activity, onPress, containerStyle }: RecentActCardProps) {
   const tc = TYPE_COLORS[activity.type] ?? { color: theme.sub, tint: '#F3F4F6', icon: 'walk' };
+  const whenText = formatRelativeTime(activity.record_date);
 
   return (
     <TouchableOpacity
@@ -97,7 +99,7 @@ export default function RecentActCard({ activity, onPress, containerStyle }: Rec
         </Text>
         <Text style={styles.sub} numberOfLines={1}>
           <Text style={{ color: tc.color, fontWeight: '700' }}>{fmtDistance(activity.distance_km)}</Text>
-          <Text> · {fmtWhen(activity.record_date)}</Text>
+          {whenText ? <Text> · {whenText}</Text> : null}
         </Text>
       </View>
 
@@ -129,4 +131,3 @@ const styles = StyleSheet.create({
   title: { fontWeight: '700', color: theme.text },
   sub: { color: theme.sub, marginTop: 2 },
 });
-

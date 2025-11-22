@@ -6,7 +6,7 @@ import type { SavedRow } from '../types/calc';
 import { formatDateTime } from '../utils/format';
 
 const theme = {
-  primaryDark: '#059669',
+  primaryDark: '#05C76E',
   sub: '#6B7280',
   text: '#0B1721',
   border: '#E5E7EB',

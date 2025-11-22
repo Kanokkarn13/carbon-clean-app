@@ -65,8 +65,8 @@ if (__DEV__) {
 }
 
 const theme = {
-  primary: '#10B981',
-  primaryDark: '#059669',
+  primary: '#07F890',
+  primaryDark: '#05C76E',
   bg: '#F6FAF8',
   card: '#FFFFFF',
   text: '#0B1721',
@@ -332,13 +332,13 @@ function LiquidWaves({
     <Svg width={waveWidth} height={height}>
       <Defs>
         <LinearGradient id={`waveGrad-${id}`} x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0%" stopColor="#36c487" stopOpacity="0.8" />
-          <Stop offset="100%" stopColor="#1f9e6f" stopOpacity="0.95" />
+          <Stop offset="0%" stopColor="#07F890" stopOpacity="0.82" />
+          <Stop offset="100%" stopColor="#05C76E" stopOpacity="0.96" />
         </LinearGradient>
       </Defs>
       <Path d={wavePath} fill={`url(#waveGrad-${id})`} />
     </Svg>
-  );
+  );  
 
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { overflow: 'hidden', borderRadius: 16 }]}>
@@ -816,10 +816,19 @@ const styles = StyleSheet.create({
   taskBg: { borderRadius: 16 }, // kept simple; we control sizing inline
 
   progressBig: {
-    fontSize: 44, lineHeight: 44, fontWeight: '900', color: '#a7fd95ff',
+    fontSize: 44, lineHeight: 44, fontWeight: '900', color: '#097969',
     marginTop: 8, marginBottom: 4,
+    textShadowColor: 'rgba(0,0,0,0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
-  progressSub: { color: '#FFFFFF', fontWeight: '600' },
+  progressSub: {
+    color: '#097969',
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.25)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
   progressToggleRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
   progressChip: {
     paddingVertical: 6,

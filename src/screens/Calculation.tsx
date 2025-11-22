@@ -13,8 +13,8 @@ import ReductionCard from '../components/ReductionCard';
 import type { SavedRow, ReductionRow } from '../types/calc';
 
 const theme = {
-  primary: '#10B981',
-  primaryDark: '#059669',
+  primary: '#07F890',
+  primaryDark: '#05C76E',
   bg: '#F6FAF8',
   card: '#FFFFFF',
   text: '#0B1721',
@@ -112,6 +112,9 @@ const Calculation = ({ navigation }: any) => {
             <View style={{ flex: 1 }}>
               <Text style={styles.cardTitle}>Calculate</Text>
               <Text style={styles.cardTitle}>Emission</Text>
+            </View>
+            <View style={styles.iconBadge}>
+              <Ionicons name="calculator-outline" size={28} color={theme.primaryDark} />
             </View>
           </View>
 

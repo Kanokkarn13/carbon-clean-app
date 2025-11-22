@@ -53,7 +53,7 @@ export default function Layout() {
     return (
       <NavigationContainer>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color="#22C55E" />
+          <ActivityIndicator size="large" color="#07F890" />
         </View>
       </NavigationContainer>
     );

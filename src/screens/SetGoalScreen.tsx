@@ -23,8 +23,8 @@ type User = {
 };
 
 const theme = {
-  primary: '#10B981',
-  primaryDark: '#059669',
+  primary: '#07F890',
+  primaryDark: '#05C76E',
   bg: '#F0FDF4',
   card: '#FFFFFF',
   text: '#0B1721',
@@ -212,7 +212,7 @@ const styles = StyleSheet.create({
   },
   toggleChipActive: {
     backgroundColor: theme.primary,
-    shadowColor: '#10B981',
+    shadowColor: '#07F890',
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 3,
@@ -275,7 +275,7 @@ const styles = StyleSheet.create({
     gap: 8,
     width: '70%',
     alignSelf: 'center',
-    shadowColor: '#10B981',
+    shadowColor: '#07F890',
     shadowOpacity: 0.4,
     shadowRadius: 8,
     elevation: 5,

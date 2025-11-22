@@ -31,8 +31,8 @@ type ProfileStackParamList = {
 
 // ---------- Theme ----------
 const theme = {
-  green: "#22C55E",
-  greenDark: "#16A34A",
+  green: "#07F890",
+  greenDark: "#05C76E",
   yellow: "#FACC15",
   yellowLight: "#FEF9C3",
   orange: "#FB923C",

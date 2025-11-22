@@ -17,8 +17,8 @@ import { pickUser, saveUser, updateUser, uploadProfileImage } from '../services/
 import { emissionData } from '../hooks/calculateEmission';
 
 const theme = {
-  primary: '#22C55E',
-  primaryDark: '#16A34A',
+  primary: '#07F890',
+  primaryDark: '#05C76E',
   bg: '#F6FAF8',
   card: '#FFFFFF',
   text: '#0B1721',
