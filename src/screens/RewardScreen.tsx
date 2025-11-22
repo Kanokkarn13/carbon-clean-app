@@ -18,6 +18,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import theme from '../utils/theme';
 import { sumActivityPoints, ActivityPointSource } from '../utils/points';
 import { fetchRewards, Reward } from '../services/rewardService';
+import { fetchUserById, getUser as getStoredUser, saveUser } from '../services/authService';
 import type { RootStackParamList, User } from './HomeStack';
 
 const COLOR_PALETTE = [
@@ -84,13 +85,40 @@ export default function RewardScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [user, setUser] = useState<User | undefined>(params.user);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadUser = async () => {
+      const stored = await getStoredUser().catch(() => null);
+      const latest = (stored as User) || params.user;
+      if (!latest) return;
+      if (mounted) setUser(latest);
+      if (latest.user_id) {
+        try {
+          const refreshed = await fetchUserById(latest.user_id);
+          if (refreshed?.data && mounted) {
+            setUser(refreshed.data as User);
+            await saveUser(refreshed.data as User);
+          }
+        } catch (err) {
+          console.warn('⚠️ Failed to refresh user in RewardScreen', err);
+        }
+      }
+    };
+    loadUser();
+    return () => {
+      mounted = false;
+    };
+  }, [params.user]);
+
   const userName = useMemo(() => {
-    const fname = params.user?.fname ?? '';
-    const lname = params.user?.lname ?? '';
+    const fname = user?.fname ?? '';
+    const lname = user?.lname ?? '';
     const full = `${fname} ${lname}`.trim();
     if (full) return full;
-    return params.user?.email ?? 'Member';
-  }, [params.user]);
+    return user?.email ?? 'Member';
+  }, [user]);
 
   const loadRewards = useCallback(async () => {
     setLoading(true);
@@ -149,7 +177,7 @@ export default function RewardScreen() {
             activeOpacity={0.85}
             onPress={() =>
               navigation.navigate('RedeemHistory', {
-                user: params.user,
+                user,
                 totalPoints,
               })
             }
@@ -163,7 +191,11 @@ export default function RewardScreen() {
         <View style={styles.profileRow}>
           <View style={styles.avatarWrap}>
             <Image
-              source={{ uri: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png' }}
+              source={{
+                uri:
+                  user?.profile_picture ||
+                  'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
+              }}
               style={styles.avatar}
               resizeMode="cover"
             />

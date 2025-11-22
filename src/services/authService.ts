@@ -157,6 +157,19 @@ export const setGoal = (payload: {
   value: number;
 }) => request<BasicResponse<ApiUser>>('/set-goal', payload);
 
+// 👤 Fetch user by id (returns signed profile_picture if server signs)
+export const fetchUserById = async (userId: number | string) => {
+  try {
+    return await request<BasicResponse<ApiUser>>(`/users/${userId}`, undefined, { method: 'GET' });
+  } catch (err: any) {
+    const msg = err?.message || '';
+    if (msg.toLowerCase().includes('not found') || msg.includes('404')) {
+      return { success: false, data: null };
+    }
+    throw err;
+  }
+};
+
 // 🖼️ Upload profile picture
 export const uploadProfileImage = async (
   userId: number,

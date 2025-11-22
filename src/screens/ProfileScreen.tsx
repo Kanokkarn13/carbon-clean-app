@@ -19,7 +19,7 @@ import {
 } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
-import { getUser, logout } from "../services/authService";
+import { fetchUserById, getUser, logout, saveUser } from "../services/authService";
 import { CommonActions } from "@react-navigation/native";
 
 // ---------- Types ----------
@@ -94,7 +94,19 @@ export default function ProfileScreen() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const u = routeUser ?? (await getUser());
+      const stored = await getUser();
+      let u = routeUser ?? stored;
+      if (u?.user_id) {
+        try {
+          const refreshed = await fetchUserById(u.user_id);
+          if (refreshed?.data) {
+            u = refreshed.data;
+            await saveUser(u);
+          }
+        } catch (err) {
+          console.warn("⚠️ Failed to refresh user", err);
+        }
+      }
       setUser(u || null);
 
       if (u?.user_id) {
