@@ -5,17 +5,16 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
 
-// ✅ modules
+// modules เดิม
 const db = require('./config/db');
 const authController = require('./controllers/authController');
 const { saveWalking } = require('./controllers/saveWalkingController');
 const { saveCycling } = require('./controllers/saveCyclingController');
 
 const activityRoutes = require('./routes/activityRoutes');
-const adminRoutes = require('./routes/admin');
-const blogRoutes = require('./routes/blogs');        // ถ้ามีของเดิม
-const blogAdminRoutes = require('./routes/blogAdmin'); // ✅ ใหม่ (S3 โฟลเดอร์ blog)
+const adminRoutes = require('./routes/admin');   // ← ใช้ไฟล์นี้เป็นหลัก (รวม BLOG APIs ด้วย)
 
+// (optional) rewards
 let rewardsRoutes = null;
 try {
   rewardsRoutes = require('./routes/rewards');
@@ -24,20 +23,17 @@ try {
   console.log('[info] rewardsRoutes not found (skip)');
 }
 
-// ---------- สร้าง app ก่อนใช้ app.use ทุกจุด ----------
 const app = express();
 
-/* ---------- Static uploads ---------- */
+/* Static สำหรับของเก่าที่อัปโหลดลงดิสก์ (ถ้ามีใช้อยู่) */
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-/* ---------- Body parser ---------- */
+/* Parser */
 app.use(bodyParser.json());
 
-/* ---------- CORS Gate ---------- */
+/* CORS Gate (ตามของเดิม) */
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 const ALLOW_VERCEL_SUBDOMAINS =
   String(process.env.ALLOW_VERCEL_SUBDOMAINS || 'false').toLowerCase() === 'true';
@@ -46,9 +42,7 @@ const VERCEL_PROJECT_PREFIX = process.env.VERCEL_PROJECT_PREFIX || '';
 function isLocal(origin) {
   return !!origin && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'));
 }
-function isExplicit(origin) {
-  return allowedOrigins.includes(origin);
-}
+function isExplicit(origin) { return allowedOrigins.includes(origin); }
 function isVercel(origin) {
   if (!ALLOW_VERCEL_SUBDOMAINS || !VERCEL_PROJECT_PREFIX || !origin) return false;
   try {
@@ -56,19 +50,14 @@ function isVercel(origin) {
     return h.includes(VERCEL_PROJECT_PREFIX) && h.endsWith('.vercel.app');
   } catch { return false; }
 }
-function isAllowed(origin) {
-  if (!origin) return true; // health-check/curl
-  return isExplicit(origin) || isLocal(origin) || isVercel(origin);
-}
+function isAllowed(origin) { return !origin || isExplicit(origin) || isLocal(origin) || isVercel(origin); }
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-
   if (!isAllowed(origin)) {
     console.warn('❌ Blocked CORS Origin:', origin, '| allowed:', allowedOrigins);
     return res.status(403).send('Not allowed by CORS');
   }
-
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
@@ -79,18 +68,17 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Max-Age', '86400');
-
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
-/* ---------- Debug log ---------- */
-app.use((req, res, next) => {
+/* debug log */
+app.use((req, _res, next) => {
   console.log(`📥 ${req.method} ${req.url} from ${req.headers.origin || 'no-origin'}`);
   next();
 });
 
-/* ---------- DB ping ---------- */
+/* DB ping */
 (async () => {
   try {
     await db.query('SELECT 1');
@@ -100,8 +88,8 @@ app.use((req, res, next) => {
   }
 })();
 
-/* ---------- Health ---------- */
-app.get('/health', (req, res) => {
+/* Health */
+app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     time: new Date().toISOString(),
@@ -111,35 +99,31 @@ app.get('/health', (req, res) => {
   });
 });
 
-/* ---------- Auth ---------- */
+/* Auth (เดิม) */
 app.post('/api/check-user', authController.login);
 app.post('/api/register', authController.register);
 app.post('/api/update-user', authController.updateUser);
 app.post('/api/set-goal', authController.setGoal);
 
-/* ---------- Save activities ---------- */
+/* Save activities (เดิม) */
 app.post('/api/save-walking', saveWalking);
 app.post('/api/save-cycling', saveCycling);
 
-/* ---------- Admin APIs ---------- */
-// ของเดิม
+/* Admin APIs (รวม Users, Dashboard, Rewards และ BLOG) */
 app.use('/api/admin', adminRoutes);
-app.use('/api/admin', blogRoutes);     // ถ้ามี route เก่าอยู่
 
-// ✅ อันใหม่ที่เพิ่งเพิ่ม (S3 folder blog + signed URL via /admin/blogs/file)
-app.use('/api/admin', blogAdminRoutes);
-
+/* Rewards (ถ้ามีไฟล์) */
 if (rewardsRoutes) app.use('/api/admin', rewardsRoutes);
 
-/* ---------- Activity read APIs ---------- */
+/* Activity read APIs (เดิม) */
 app.use('/api', activityRoutes);
 
-/* ---------- Root ---------- */
-app.get('/', (req, res) => {
+/* Root */
+app.get('/', (_req, res) => {
   res.send('🌐 CarbonClean API is running successfully!');
 });
 
-/* ---------- Start ---------- */
+/* Start */
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 app.listen(PORT, HOST, () => {
