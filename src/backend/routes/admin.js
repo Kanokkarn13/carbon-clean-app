@@ -151,7 +151,7 @@ router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   catch (err) { console.error(err); res.status(500).json({ message:'DB error' }); }
 });
 
-/* ============== NEW: WHO AM I (สำหรับ FE เอา author_id) ============== */
+/* ============== WHO AM I (ให้ FE เอา author_id) ============== */
 router.get('/me', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const uid = Number(req.user?.user_id || 0);
@@ -444,6 +444,116 @@ router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+/* ===================== NEW: Activity Explorer (per user) ===================== */
+/*  GET /api/admin/activity?user_id=19&type=all|walk|bike&limit=20&offset=0  */
+router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const userId = safeInt(req.query.user_id, 0);
+    if (!userId) return res.status(400).json({ message: 'user_id is required' });
+    const type = String(req.query.type || 'all').toLowerCase();
+    const limit  = Math.min(safeInt(req.query.limit, 20), 200);
+    const offset = Math.max(safeInt(req.query.offset, 0), 0);
+
+    // -------- build SQL ----------
+    let dataSql = '';
+    let countSql = '';
+    let params = [];
+    let countParams = [];
+
+    if (type === 'walk') {
+      dataSql = `
+        SELECT w.id, w.user_id, 'walk' AS type,
+               w.distance_km, w.carbonReduce,
+               (CASE WHEN w.duration_sec>0 AND w.distance_km IS NOT NULL
+                     THEN (w.distance_km/(w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+               w.record_date
+        FROM walk_history w
+        WHERE w.user_id = ?
+        ORDER BY w.record_date DESC
+        LIMIT ? OFFSET ?
+      `;
+      params = [userId, limit, offset];
+      countSql = `SELECT COUNT(*) AS cnt FROM walk_history WHERE user_id = ?`;
+      countParams = [userId];
+    } else if (type === 'bike' || type === 'bic' || type === 'bicycle') {
+      dataSql = `
+        SELECT b.id, b.user_id, 'bike' AS type,
+               b.distance_km, b.carbonReduce,
+               (CASE WHEN b.duration_sec>0 AND b.distance_km IS NOT NULL
+                     THEN (b.distance_km/(b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+               b.record_date
+        FROM bic_history b
+        WHERE b.user_id = ?
+        ORDER BY b.record_date DESC
+        LIMIT ? OFFSET ?
+      `;
+      params = [userId, limit, offset];
+      countSql = `SELECT COUNT(*) AS cnt FROM bic_history WHERE user_id = ?`;
+      countParams = [userId];
+    } else {
+      // all
+      dataSql = `
+        SELECT * FROM (
+          SELECT w.id, w.user_id, 'walk' AS type,
+                 w.distance_km, w.carbonReduce,
+                 (CASE WHEN w.duration_sec>0 AND w.distance_km IS NOT NULL
+                       THEN (w.distance_km/(w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+                 w.record_date
+          FROM walk_history w
+          WHERE w.user_id = ?
+          UNION ALL
+          SELECT b.id, b.user_id, 'bike' AS type,
+                 b.distance_km, b.carbonReduce,
+                 (CASE WHEN b.duration_sec>0 AND b.distance_km IS NOT NULL
+                       THEN (b.distance_km/(b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+                 b.record_date
+          FROM bic_history b
+          WHERE b.user_id = ?
+        ) x
+        ORDER BY x.record_date DESC
+        LIMIT ? OFFSET ?
+      `;
+      params = [userId, userId, limit, offset];
+      countSql = `
+        SELECT (
+          (SELECT COUNT(*) FROM walk_history WHERE user_id = ?)
+          +
+          (SELECT COUNT(*) FROM bic_history  WHERE user_id = ?)
+        ) AS cnt
+      `;
+      countParams = [userId, userId];
+    }
+
+    const [rows] = await db.query(dataSql, params);
+    const [[cntRow]] = await db.query(countSql, countParams);
+
+    const data = rows.map(r => ({
+      id: r.id,
+      user_id: r.user_id,
+      type: r.type,
+      distance_km: Number(r.distance_km || 0),
+      carbon: Number(r.carbonReduce || 0),
+      pace_kmh: r.pace_kmh == null ? null : Number(r.pace_kmh),
+      record_date: r.record_date
+    }));
+
+    res.json({
+      success: true,
+      data,
+      meta: {
+        user_id: userId,
+        type,
+        limit,
+        offset,
+        total: Number(cntRow?.cnt || 0)
+      }
+    });
+  } catch (err) {
+    console.error('GET /admin/activity error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
 /* ============================================================
  * REWARDS + S3 PUBLIC
  * ============================================================ */
@@ -542,10 +652,10 @@ router.post('/rewards/upload', verifyToken, verifyAdmin, upload.single('file'), 
     if (!file) return res.status(400).json({ message: 'file is required' });
     const ext = path.extname(file.originalname || '').toLowerCase() || '.bin';
     const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-    const key = `reward/${filename}`;
-    await uploadBufferToS3({ buffer: file.buffer, contentType: file.mimetype, key });
-    const publicUrl = makePublicFileUrl(req, key, 'rewords'.replace('rewords','rewards'));
-    return res.json({ success: true, url: publicUrl, key });
+    theKey = `reward/${filename}`;
+    await uploadBufferToS3({ buffer: file.buffer, contentType: file.mimetype, key: theKey });
+    const publicUrl = makePublicFileUrl(req, theKey, 'rewards');
+    return res.json({ success: true, url: publicUrl, key: theKey });
   } catch (err) {
     console.error('POST /admin/rewards/upload error:', err);
     return res.status(500).json({ message: err?.message || 'upload failed' });
@@ -566,7 +676,7 @@ router.get('/rewards/file', async (req, res) => {
 });
 
 /* ============================================================
- * BLOGS (knowledge_article) + S3 PUBLIC  ← ← ← (เพิ่มมาใหม่)
+ * BLOGS (knowledge_article) + S3 PUBLIC
  * ============================================================ */
 const BLOG_TABLE = 'knowledge_article';
 
