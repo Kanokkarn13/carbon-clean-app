@@ -2,7 +2,6 @@
 const db = require('../config/db');
 
 const ACTIVITY_TABLE = process.env.ACTIVITY_TABLE || 'e_point';
-const ALLOWED = new Set(['Car', 'Motorcycle', 'Taxi', 'Bus']);
 
 /* ---------- helpers ---------- */
 function badRequest(res, details) {
@@ -41,14 +40,14 @@ exports.saveTransportEmission = async (req, res) => {
 
     // If you later add middleware, swap to: const user_id = Number(req.userId);
     const user_id = Number(b.user_id);
-    const activity_type = String(b.activity_type || '');
+    const activity_type = String(b.activity_type || '').trim();
     const emission_kgco2e = Number(b.emission_kgco2e);
     const distance_km = Number(b.distance_km);
     const parameters = (b.parameters && typeof b.parameters === 'object') ? b.parameters : {};
 
     const errors = [];
     if (!Number.isInteger(user_id) || user_id <= 0) errors.push('user_id must be a positive integer');
-    if (!ALLOWED.has(activity_type)) errors.push(`activity_type must be one of: ${[...ALLOWED].join(', ')}`);
+    if (!activity_type) errors.push('activity_type is required');
     if (!Number.isFinite(emission_kgco2e) || emission_kgco2e < 0) errors.push('emission_kgco2e must be a nonnegative number');
     if (!Number.isFinite(distance_km) || distance_km <= 0) errors.push('distance_km must be a positive number');
     if (errors.length) return badRequest(res, errors);

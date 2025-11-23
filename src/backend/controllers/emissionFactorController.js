@@ -6,7 +6,7 @@ const EMISSION_TABLE = process.env.EMISSION_TABLE || 'emission';
 exports.listEmissionFactors = async (_req, res) => {
   try {
     const sql = `
-      SELECT activity, type, class, unit, ef_point, refer, update_at
+      SELECT ef_id, activity, type, class, unit, ef_point, refer, update_at
       FROM \`${EMISSION_TABLE}\`
     `;
     const [rows] = await db.query(sql);
