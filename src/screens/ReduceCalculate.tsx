@@ -24,8 +24,7 @@ const theme = {
   border: '#E5E7EB',
 };
 
-const VEHICLES = ['Car', 'Motorbike', 'Bus', 'Taxis'] as const;
-const FUELS = ['Petrol', 'Diesel', 'Hybrid', 'Unknown'] as const;
+const VEHICLES = ['Car', 'Motorbike', 'Bus', 'Rail', 'Flights', 'Ferry', 'Electricity', 'Taxis'] as const;
 
 // ---- API origin (ENV; don't put /api and no trailing slash) ----
 const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
@@ -182,12 +181,12 @@ export default function ReduceCalculate() {
     reload: reloadFactors,
   } = useEmissionFactors();
 
-  const [fromVehicle, setFromVehicle] = useState<(typeof VEHICLES)[number]>('Car');
-  const [fromFuel, setFromFuel] = useState<(typeof FUELS)[number]>('Petrol');
+  const [fromVehicle, setFromVehicle] = useState<string>('Car');
+  const [fromFuel, setFromFuel] = useState<string>('Petrol');
   const [fromSize, setFromSize] = useState('Small car');
 
-  const [toVehicle, setToVehicle] = useState<(typeof VEHICLES)[number]>('Bus');
-  const [toFuel, setToFuel] = useState<(typeof FUELS)[number] | ''>('');
+  const [toVehicle, setToVehicle] = useState<string>('Bus');
+  const [toFuel, setToFuel] = useState<string | ''>('');
   const [toSize, setToSize] = useState('Average local bus');
 
   const [distance, setDistance] = useState('');
@@ -197,10 +196,26 @@ export default function ReduceCalculate() {
   const [electricThisMonth, setElectricThisMonth] = useState('');
   const [electricReduction, setElectricReduction] = useState<number | null>(null);
 
+  const carFuels = useMemo(
+    () =>
+      Object.keys(factorData || {}).filter((k) =>
+        ['Diesel', 'Petrol', 'Hybrid', 'CNG', 'Unknown'].includes(k)
+      ),
+    [factorData]
+  );
+  const vehicleOptions = useMemo(() => {
+    const keys = Object.keys(factorData || {}).filter(
+      (k) => !['Diesel', 'Petrol', 'Hybrid', 'CNG', 'Unknown'].includes(k)
+    );
+    const base = ['Car', ...keys];
+    const extra = VEHICLES.filter((v) => !base.includes(v));
+    return [...new Set([...base, ...extra])];
+  }, [factorData]);
+
   const getVehicleClasses = (vehicle: string, fuel?: string) => {
     const source: any = factorData;
     if (vehicle === 'Car') {
-      const table = source[fuel || 'Petrol'];
+      const table = source[fuel || carFuels[0] || 'Petrol'];
       return table ? Object.keys(table) : [];
     }
     const table = source[vehicle];
@@ -215,6 +230,19 @@ export default function ReduceCalculate() {
     () => getVehicleClasses(toVehicle, toFuel || undefined),
     [toVehicle, toFuel, factorData]
   );
+
+  // If an activity has no classes, present a single default option to prevent empty chips.
+  useEffect(() => {
+    if (fromClassOptions.length === 0) {
+      setFromSize('default');
+    }
+  }, [fromClassOptions]);
+
+  useEffect(() => {
+    if (toClassOptions.length === 0) {
+      setToSize('default');
+    }
+  }, [toClassOptions]);
 
   useEffect(() => {
     if (fromClassOptions.length && !fromClassOptions.includes(fromSize)) {
@@ -391,11 +419,12 @@ export default function ReduceCalculate() {
     }
   };
 
-  const onChangeFromVehicle = (v: (typeof VEHICLES)[number]) => {
+  const onChangeFromVehicle = (v: string) => {
     setFromVehicle(v);
     if (v === 'Car') {
-      setFromFuel('Petrol');
-      const cls = getVehicleClasses('Car', 'Petrol');
+      const defaultFuel = carFuels[0] || 'Petrol';
+      setFromFuel(defaultFuel);
+      const cls = getVehicleClasses('Car', defaultFuel);
       setFromSize(cls[0] || '');
     } else {
       setFromFuel('Petrol');
@@ -404,11 +433,12 @@ export default function ReduceCalculate() {
     }
   };
 
-  const onChangeToVehicle = (v: (typeof VEHICLES)[number]) => {
+  const onChangeToVehicle = (v: string) => {
     setToVehicle(v);
     if (v === 'Car') {
-      setToFuel('Petrol');
-      const cls = getVehicleClasses('Car', 'Petrol');
+      const defaultFuel = carFuels[0] || 'Petrol';
+      setToFuel(defaultFuel);
+      const cls = getVehicleClasses('Car', defaultFuel);
       setToSize(cls[0] || '');
     } else {
       setToFuel('');
@@ -436,7 +466,7 @@ export default function ReduceCalculate() {
         <Card icon="swap-vertical" title="Switch Your Transport">
           <Text style={styles.label}>Vehicle you normally use</Text>
           <ChipGroup
-            options={VEHICLES as unknown as string[]}
+            options={vehicleOptions as unknown as string[]}
             value={fromVehicle}
             onChange={(v) => onChangeFromVehicle(v as any)}
           />
@@ -444,7 +474,7 @@ export default function ReduceCalculate() {
             <>
               <Text style={[styles.label, { marginTop: 12 }]}>Fuel</Text>
               <ChipGroup
-                options={FUELS as unknown as string[]}
+                options={(carFuels.length ? carFuels : ['Petrol', 'Diesel', 'Hybrid', 'CNG', 'Unknown']) as unknown as string[]}
                 value={fromFuel}
                 onChange={(v) => {
                   setFromFuel(v as any);
@@ -461,7 +491,7 @@ export default function ReduceCalculate() {
 
           <Text style={styles.label}>Vehicle you switch to</Text>
           <ChipGroup
-            options={VEHICLES as unknown as string[]}
+            options={vehicleOptions as unknown as string[]}
             value={toVehicle}
             onChange={(v) => onChangeToVehicle(v as any)}
           />
@@ -469,8 +499,8 @@ export default function ReduceCalculate() {
             <>
               <Text style={[styles.label, { marginTop: 12 }]}>Fuel</Text>
               <ChipGroup
-                options={FUELS as unknown as string[]}
-                value={toFuel || 'Petrol'}
+                options={(carFuels.length ? carFuels : ['Petrol', 'Diesel', 'Hybrid', 'CNG', 'Unknown']) as unknown as string[]}
+                value={toFuel || (carFuels[0] || 'Petrol')}
                 onChange={(v) => {
                   setToFuel(v as any);
                   const cls = getVehicleClasses('Car', v);

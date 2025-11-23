@@ -10,7 +10,9 @@ export function computeCarbonReduce(user: any, distanceKm: number): number {
   try {
     const [category, fuel, size] = (user?.vehicle || '').split(',');
     const vehicleClass =
-      (category?.trim() === 'Cars' ? `${size?.trim()} car` : size?.trim()) || undefined;
+      (category?.trim() === 'Cars'
+        ? `${(size || 'Average')?.trim()}${(size || '').includes('car') ? '' : ' car'}`
+        : size?.trim()) || undefined;
 
     const val = calculateEmission(fuel?.trim(), vehicleClass, distanceKm);
     const n = Number(val);

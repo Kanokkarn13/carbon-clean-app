@@ -27,7 +27,7 @@ const theme = {
 };
 
 const VEHICLE_TYPES = ['Cars', 'Motorbike', 'Bus', 'Taxis'] as const;
-const FUEL_TYPES = ['Petrol', 'Diesel', 'Unknown'] as const;
+const FALLBACK_FUEL_TYPES = ['Petrol', 'Diesel', 'Hybrid', 'CNG', 'Unknown'] as const;
 
 function Card({ children, title, icon }: { children: React.ReactNode; title: string; icon: keyof typeof Ionicons.glyphMap }) {
   return (
@@ -100,7 +100,7 @@ const ProfileEdit = () => {
   const [houseMember, setHouseMember] = useState(String(user.house_member || ''));
 
   const [vehicleType, setVehicleType] = useState<(typeof VEHICLE_TYPES)[number]>('Cars');
-  const [fuelType, setFuelType] = useState<(typeof FUEL_TYPES)[number]>('Petrol');
+  const [fuelType, setFuelType] = useState<string>('Petrol');
   const [vehicleClass, setVehicleClass] = useState<string>('Small car');
   const [saving, setSaving] = useState(false);
   const { data: factorData, reload: reloadFactors } = useEmissionFactors();
@@ -114,7 +114,12 @@ const ProfileEdit = () => {
     }
   }, [user.vehicle]);
 
-  const getFuelOptions = (type: string) => (type === 'Cars' ? FUEL_TYPES : (['Unknown'] as const));
+  const getFuelOptions = (type: string) =>
+    type === 'Cars'
+      ? (Object.keys(factorData || {}).filter((k) =>
+          ['Petrol', 'Diesel', 'Hybrid', 'CNG', 'Unknown'].includes(k)
+        ) as string[]) || FALLBACK_FUEL_TYPES
+      : (['Unknown'] as const);
   const getClassOptions = (type: string, fuel: string) => {
     const source: any = factorData;
     return type === 'Cars'
@@ -142,7 +147,7 @@ const ProfileEdit = () => {
     setVehicleClass(firstClass);
   };
 
-  const onChangeFuel = (f: (typeof FUEL_TYPES)[number]) => {
+  const onChangeFuel = (f: string) => {
     setFuelType(f);
     const firstClass = getClassOptions('Cars', f)[0] || '';
     setVehicleClass(firstClass);

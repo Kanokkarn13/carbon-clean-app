@@ -29,10 +29,21 @@ export { emissionData };
 let loadPromise: Promise<EmissionData> | null = null;
 
 const CAR_KEYS = ['Diesel', 'Petrol', 'Hybrid', 'CNG', 'Unknown'] as const;
+export const emissionUnits: Record<string, Record<string, string>> = {};
 
 function normalizeActivityFromRow(activity: string): string {
   const value = (activity || '').trim();
   const lower = value.toLowerCase();
+  const carMatch = value.match(/cars?\s*\(([^)]+)\)/i);
+  if (carMatch && carMatch[1]) {
+    const fuel = carMatch[1].trim();
+    if (/diesel/i.test(fuel)) return 'Diesel';
+    if (/petrol|gasoline/i.test(fuel)) return 'Petrol';
+    if (/hybrid/i.test(fuel)) return 'Hybrid';
+    if (/cng/i.test(fuel)) return 'CNG';
+    return fuel;
+  }
+
   if (lower.includes('cars')) {
     if (lower.includes('diesel')) return 'Diesel';
     if (lower.includes('petrol')) return 'Petrol';
@@ -82,6 +93,7 @@ function normalizeActivity(activity: string): string {
   if (lower.startsWith('ferry')) return 'Ferry';
   if (lower.startsWith('electric')) return 'Electricity';
   if (lower.startsWith('taxi')) return 'Taxis';
+  if (lower.includes('gasoline')) return 'Petrol';
   if (lower.includes('diesel')) return 'Diesel';
   if (lower.includes('petrol')) return 'Petrol';
   if (lower.includes('hybrid')) return 'Hybrid';
@@ -95,6 +107,7 @@ function normalizeVehicleClass(cls: string, activity?: string): string {
   const lower = raw.toLowerCase();
 
   if (activity && isCarActivity(activity)) {
+    if (!raw) return 'Average car';
     if (lower === 'small') return 'Small car';
     if (lower === 'medium') return 'Medium car';
     if (lower === 'large') return 'Large car';
@@ -111,16 +124,15 @@ function buildEmissionData(rows: EmissionRow[]): EmissionData {
   const table: EmissionData = {};
 
   rows.forEach((row) => {
-    if (row.ef_point == null) return;
-    const isWellToTank =
-      (row.class && row.class.toLowerCase().includes('well-to-tank')) ||
-      (row.type && row.type.toLowerCase().includes('well-to-tank'));
-    if (isWellToTank) return; // keep UI simple; skip well-to-tank rows
+    const factor = Number(row.ef_point);
+    if (!Number.isFinite(factor)) return;
 
     const activity = normalizeActivityFromRow(row.activity);
     const label = buildLabel(row);
     if (!table[activity]) table[activity] = {};
-    table[activity][label] = row.ef_point;
+    table[activity][label] = factor;
+    if (!emissionUnits[activity]) emissionUnits[activity] = {};
+    emissionUnits[activity][label] = (row.unit || '').toString();
   });
 
   // Fill Unknown cars with averages across known fuels.
@@ -171,6 +183,7 @@ export async function loadEmissionData(force = false): Promise<EmissionData> {
 
   loadPromise = (async () => {
     const rows = await fetchEmissionRows();
+    if (!rows.length) throw new Error('No emission rows returned');
     emissionData = buildEmissionData(rows);
     loadPromise = null;
     return emissionData;
@@ -181,6 +194,9 @@ export async function loadEmissionData(force = false): Promise<EmissionData> {
 
 export function getEmissionData(): EmissionData {
   return emissionData;
+}
+export function getEmissionUnits() {
+  return emissionUnits;
 }
 
 // Kick off a background load so the cache fills early.
@@ -246,6 +262,21 @@ function getEmissionFactor(activity: string, vehicleClass: string): number | und
   for (const [act, cls] of attempts) {
     const val = emissionData[act]?.[cls];
     if (typeof val === 'number') return val;
+  }
+
+  // Fallback 1: any class under the normalized activity
+  const table = emissionData[activityKey];
+  if (table) {
+    const first = Object.values(table).find((v) => typeof v === 'number');
+    if (typeof first === 'number') return first;
+  }
+
+  // Fallback 2: try Unknown car factors for car-related input
+  if (isCarActivity(activityKey) && emissionData.Unknown) {
+    const unknownVal = emissionData.Unknown[classKey] ?? emissionData.Unknown['Average car'];
+    if (typeof unknownVal === 'number') return unknownVal;
+    const first = Object.values(emissionData.Unknown).find((v) => typeof v === 'number');
+    if (typeof first === 'number') return first;
   }
 
   return undefined;

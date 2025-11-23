@@ -1,31 +1,23 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, ScrollView, TextInput, Alert,
-  SafeAreaView, KeyboardAvoidingView, Platform, StyleSheet
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  TextInput,
+  Alert,
+  SafeAreaView,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { calculateEmission, useEmissionFactors, loadEmissionData } from '../hooks/calculateEmission';
+import { calculateEmission, useEmissionFactors, loadEmissionData, getEmissionUnits } from '../hooks/calculateEmission';
 
-// ---- เก็บ type ให้ตรงกับ HomeStack.tsx ----
 type ActivityType = 'Cycling' | 'Walking';
-type Activity = {
-  type: ActivityType;
-  title?: string;
-  description?: string;
-  distance_km?: number;
-  step_total?: number;
-  duration_sec?: number;
-  record_date?: string | Date;
-  id?: string | number;
-};
-type User = {
-  user_id?: string | number;
-  id?: string | number;
-  fname?: string;
-  lname?: string;
-  email?: string;
-};
+type Activity = { type: ActivityType; title?: string; description?: string; distance_km?: number; step_total?: number; duration_sec?: number; record_date?: string | Date; id?: string | number };
+type User = { user_id?: string | number; id?: string | number; fname?: string; lname?: string; email?: string };
 type RootStackParamList = {
   Home: { user?: User } | undefined;
   Calculation: { user?: User } | undefined;
@@ -36,15 +28,9 @@ type RootStackParamList = {
   RecentAct: { activity: Activity } | undefined;
 };
 
-// ---- API origin (อย่าใส่ /api ใน ENV) ----
 const RAW_ORIGIN = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.0.102:3000';
-const API_ORIGIN = RAW_ORIGIN.replace(/\/+$/, '');             // ตัด / ท้าย
+const API_ORIGIN = RAW_ORIGIN.replace(/\/+$/, '');
 const api = (path: string) => `${API_ORIGIN}/api${path}`;
-
-if (__DEV__) {
-  // eslint-disable-next-line no-console
-  console.log('[API_ORIGIN]', API_ORIGIN);
-}
 
 const theme = {
   green: '#07F890',
@@ -56,34 +42,24 @@ const theme = {
   border: '#E5E7EB',
 };
 
-function ChipGroup({ options, value, onChange }:{
-  options: string[]; value: string; onChange: (v: string) => void;
-}) {
+function ChipGroup({ options, value, onChange, scrollable = false }: { options: string[]; value: string; onChange: (v: string) => void; scrollable?: boolean }) {
+  const content = options.map((opt) => {
+    const active = opt === value;
+    return (
+      <TouchableOpacity key={opt} onPress={() => onChange(opt)} style={[styles.chip, active && styles.chipActive]} activeOpacity={0.8}>
+        <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt}</Text>
+      </TouchableOpacity>
+    );
+  });
+  if (!scrollable) return <View style={styles.chipRow}>{content}</View>;
   return (
-    <View style={styles.chipRow}>
-      {options.map(opt => {
-        const active = opt === value;
-        return (
-          <TouchableOpacity
-            key={opt}
-            onPress={() => onChange(opt)}
-            style={[styles.chip, active && styles.chipActive]}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.chipText, active && styles.chipTextActive]}>{opt}</Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+      {content}
+    </ScrollView>
   );
 }
 
-function LabeledInput({
-  label, value, onChangeText, placeholder, keyboardType = 'default', suffix
-}:{
-  label: string; value: string; onChangeText: (t: string)=>void;
-  placeholder?: string; keyboardType?: 'default'|'numeric'; suffix?: string;
-}) {
+function LabeledInput({ label, value, onChangeText, placeholder, keyboardType = 'default', suffix }: { label: string; value: string; onChangeText: (t: string) => void; placeholder?: string; keyboardType?: 'default' | 'numeric'; suffix?: string }) {
   return (
     <View style={{ marginTop: 12 }}>
       <Text style={styles.label}>{label}</Text>
@@ -96,15 +72,17 @@ function LabeledInput({
           keyboardType={keyboardType}
           placeholderTextColor={theme.sub}
         />
-        {suffix ? <View style={styles.suffix}><Text style={styles.suffixText}>{suffix}</Text></View> : null}
+        {suffix ? (
+          <View style={styles.suffix}>
+            <Text style={styles.suffixText}>{suffix}</Text>
+          </View>
+        ) : null}
       </View>
     </View>
   );
 }
 
-function Section({ icon, title, children }:{
-  icon: keyof typeof Ionicons.glyphMap; title: string; children: React.ReactNode;
-}) {
+function Section({ icon, title, children }: { icon: keyof typeof Ionicons.glyphMap; title: string; children: React.ReactNode }) {
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
@@ -116,20 +94,22 @@ function Section({ icon, title, children }:{
   );
 }
 
-function ButtonRow({ onCalc, onSave }:{ onCalc:()=>void; onSave:()=>void }) {
+function ButtonRow({ onCalc, onSave }: { onCalc: () => void; onSave?: () => void }) {
   return (
     <View style={styles.rowButtons}>
       <TouchableOpacity style={styles.primaryBtn} onPress={onCalc}>
         <Text style={styles.primaryBtnText}>Calculate</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.ghostBtn} onPress={onSave}>
-        <Text style={styles.ghostBtnText}>Save</Text>
-      </TouchableOpacity>
+      {onSave ? (
+        <TouchableOpacity style={styles.ghostBtn} onPress={onSave}>
+          <Text style={styles.ghostBtnText}>Save</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
 
-function ResultBadge({ value }:{ value: string | null }) {
+function ResultBadge({ value }: { value: string | null }) {
   if (!value) return null;
   return (
     <View style={styles.resultBadge}>
@@ -139,91 +119,68 @@ function ResultBadge({ value }:{ value: string | null }) {
   );
 }
 
+type ActivityState = Record<string, { cls: string; amount: string; result: string | null }>;
+
 export default function EmissionCalculate() {
   const navigation = useNavigation();
-  const route = useRoute<RouteProp<RootStackParamList,'EmissonCalculate'>>();
+  const route = useRoute<RouteProp<RootStackParamList, 'EmissonCalculate'>>();
   const user = route.params?.user;
   const userId = Number(user?.user_id ?? user?.id);
-  const { reload: reloadFactors } = useEmissionFactors();
+  const { data: factorData, loading: factorLoading, error: factorError, reload: reloadFactors } = useEmissionFactors();
+  const units = useMemo(() => getEmissionUnits(), []);
 
-  // ---- States ----
-  const [fuel, setFuel] = useState<'Unknown' | 'Petrol' | 'Diesel' | 'Hybrid'>('Unknown');
-  const [size, setSize] = useState<'Small' | 'Medium' | 'Large'>('Small');
-  const [distance, setDistance] = useState('');
-  const [result, setResult] = useState<string | null>(null);
+  const carFuelKeys = new Set(['Diesel', 'Petrol', 'Hybrid', 'CNG', 'Unknown']);
 
-  const [motorcycleSize, setMotorcycleSize] = useState<'Small' | 'Medium' | 'Large'>('Small');
-  const [motorcycleDistance, setMotorcycleDistance] = useState('');
-  const [motorcycleResult, setMotorcycleResult] = useState<string | null>(null);
+  const carFuels = useMemo(
+    () => Object.keys(factorData || {}).filter((k) => carFuelKeys.has(k)),
+    [factorData],
+  );
 
-  const [taxiDistance, setTaxiDistance] = useState('');
-  const [taxiResult, setTaxiResult] = useState<string | null>(null);
+  const activities = useMemo(
+    () => Object.keys(factorData || {}).filter((k) => !carFuelKeys.has(k)),
+    [factorData],
+  );
 
-  const [busDistance, setBusDistance] = useState('');
-  const [busResult, setBusResult] = useState<string | null>(null);
+  const [carFuel, setCarFuel] = useState<string>('Petrol');
+  const [carSize, setCarSize] = useState<string>('Small car');
+  const [carDistance, setCarDistance] = useState<string>('');
+  const [carResult, setCarResult] = useState<string | null>(null);
 
-  const parseKm = (v: string) => {
+  const [activityState, setActivityState] = useState<ActivityState>({});
+
+  useEffect(() => {
+    if (carFuels.length && !carFuels.includes(carFuel)) {
+      setCarFuel(carFuels[0]);
+    }
+  }, [carFuels, carFuel]);
+
+  useEffect(() => {
+    const table = (factorData as any)?.[carFuel];
+    const sizes = table ? Object.keys(table) : ['Small car', 'Medium car', 'Large car', 'Average car'];
+    if (!sizes.includes(carSize)) setCarSize(sizes[0]);
+  }, [carFuel, carSize, factorData]);
+
+  useEffect(() => {
+    const next: ActivityState = {};
+    activities.forEach((act) => {
+      const classes = Object.keys((factorData as any)?.[act] || {});
+      next[act] = {
+        cls: activityState[act]?.cls || classes[0] || 'default',
+        amount: activityState[act]?.amount || '',
+        result: activityState[act]?.result || null,
+      };
+    });
+    setActivityState(next);
+  }, [activities, factorData]);
+
+  const parseAmount = (v: string) => {
     const dist = parseFloat(v);
     return isNaN(dist) || dist <= 0 ? null : dist;
   };
 
-  async function postJson(path: string, body: any) {
-    const url = api(path);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      keepalive: true,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      console.log('❌ POST failed', res.status, url, text);
-      throw new Error(text || `HTTP ${res.status}`);
-    }
-    console.log('✅ POST ok', url, text);
-    return text ? JSON.parse(text) : {};
-  }
-
-  const requireUser = () => {
-    if (!Number.isInteger(userId) || userId <= 0) {
-      Alert.alert('Login required', 'กรุณาเข้าสู่ระบบก่อนบันทึกข้อมูล');
-      return false;
-    }
-    return true;
-  };
-
-  const confirmAndSave = (payload: any) => {
-    Alert.alert(
-      'Save result?',
-      `Activity: ${payload.activity_type}\nDistance: ${payload.distance_km} km\nEmission: ${payload.emission_kgco2e} kgCO₂e`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Save',
-          onPress: async () => {
-            try {
-              await postJson('/emission', payload);
-              Alert.alert('Saved', 'Your emission record has been saved.');
-            } catch (err: any) {
-              let msg = 'Network error';
-              try {
-                const parsed = JSON.parse(err?.message);
-                msg = parsed?.details || parsed?.error || msg;
-              } catch {
-                msg = err?.message || msg;
-              }
-              Alert.alert('Save failed', String(msg));
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  // ---- Handlers ----
   const ensureFactorsReady = async () => {
     try {
-      await loadEmissionData();
+      await loadEmissionData(true);
       return true;
     } catch (err: any) {
       Alert.alert('Emission factors unavailable', err?.message || 'Could not load emission data.', [
@@ -234,111 +191,78 @@ export default function EmissionCalculate() {
     }
   };
 
-  const handleCalculate = async () => {
+  const handleCalcCar = async () => {
     if (!(await ensureFactorsReady())) return;
-    const dist = parseKm(distance);
+    const dist = parseAmount(carDistance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
-    const emission = calculateEmission(fuel, `${size} car`, dist);
+    const emission = calculateEmission(carFuel, carSize, dist);
     if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    setResult(`${emission} kgCO₂e`);
+    setCarResult(`${emission} kgCO₂e`);
+  };
+
+  const handleCalcActivity = async (activity: string) => {
+    if (!(await ensureFactorsReady())) return;
+    const state = activityState[activity];
+    const dist = parseAmount(state?.amount || '');
+    if (!dist) return Alert.alert('Invalid', 'Enter valid amount');
+    const emission = calculateEmission(activity, state?.cls, dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
+    setActivityState((prev) => ({
+      ...prev,
+      [activity]: { ...(prev[activity] || {}), result: `${emission} kgCO₂e` },
+    }));
+  };
+
+  const saveToBackend = async (activity: string, distance: number, emission: number, param: string | null) => {
+    if (!userId || userId <= 0) {
+      Alert.alert('Login required', 'กรุณาเข้าสู่ระบบก่อนบันทึกข้อมูล');
+      return;
+    }
+    const payload = {
+      user_id: userId,
+      activity_type: activity,
+      distance_km: distance,
+      emission_kgco2e: emission,
+      parameters: param ? { type: param } : {},
+    };
+    try {
+      await postJson('/emission', payload);
+      Alert.alert('Saved', 'Your emission record has been saved.');
+    } catch (err: any) {
+      let msg = 'Network error';
+      try {
+        const parsed = JSON.parse(err?.message);
+        msg = parsed?.details || parsed?.error || msg;
+      } catch {
+        msg = err?.message || msg;
+      }
+      Alert.alert('Save failed', String(msg));
+    }
   };
 
   const handleSaveCar = async () => {
-    if (!requireUser()) return;
     if (!(await ensureFactorsReady())) return;
-    const dist = parseKm(distance);
+    const dist = parseAmount(carDistance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
-    const emission = calculateEmission(fuel, `${size} car`, dist);
+    const emission = calculateEmission(carFuel, carSize, dist);
     if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    confirmAndSave({
-      user_id: userId,
-      activity_type: 'Car',
-      distance_km: dist,
-      emission_kgco2e: emission,
-      parameters: { fuel, size },
-    });
+    await saveToBackend('Car', dist, emission, `${carFuel} ${carSize}`);
   };
 
-  const handleMotorcycle = async () => {
+  const handleSaveActivity = async (activity: string) => {
     if (!(await ensureFactorsReady())) return;
-    const dist = parseKm(motorcycleDistance);
-    if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
-    const emission = calculateEmission('Motorbike', motorcycleSize, dist);
+    const state = activityState[activity];
+    const dist = parseAmount(state?.amount || '');
+    if (!dist) return Alert.alert('Invalid', 'Enter valid amount');
+    const emission = calculateEmission(activity, state?.cls, dist);
     if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    setMotorcycleResult(`${emission} kgCO₂e`);
-  };
-
-  const handleSaveMotor = async () => {
-    if (!requireUser()) return;
-    if (!(await ensureFactorsReady())) return;
-    const dist = parseKm(motorcycleDistance);
-    if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
-    const emission = calculateEmission('Motorbike', motorcycleSize, dist);
-    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    confirmAndSave({
-      user_id: userId,
-      activity_type: 'Motorcycle',
-      distance_km: dist,
-      emission_kgco2e: emission,
-      parameters: { size: motorcycleSize },
-    });
-  };
-
-  const handleTaxi = async () => {
-    if (!(await ensureFactorsReady())) return;
-    const dist = parseKm(taxiDistance);
-    if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
-    const emission = calculateEmission('Taxis', 'Regular taxi', dist);
-    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    setTaxiResult(`${emission} kgCO₂e`);
-  };
-
-  const handleSaveTaxi = async () => {
-    if (!requireUser()) return;
-    if (!(await ensureFactorsReady())) return;
-    const dist = parseKm(taxiDistance);
-    if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
-    const emission = calculateEmission('Taxis', 'Regular taxi', dist);
-    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    confirmAndSave({
-      user_id: userId,
-      activity_type: 'Taxi',
-      distance_km: dist,
-      emission_kgco2e: emission,
-      parameters: { type: 'Regular taxi' },
-    });
-  };
-
-  const handleBus = async () => {
-    if (!(await ensureFactorsReady())) return;
-    const dist = parseKm(busDistance);
-    if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
-    const emission = calculateEmission('Bus', 'Average local bus', dist);
-    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    setBusResult(`${emission} kgCO₂e`);
-  };
-
-  const handleSaveBus = async () => {
-    if (!requireUser()) return;
-    if (!(await ensureFactorsReady())) return;
-    const dist = parseKm(busDistance);
-    if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
-    const emission = calculateEmission('Bus', 'Average local bus', dist);
-    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    confirmAndSave({
-      user_id: userId,
-      activity_type: 'Bus',
-      distance_km: dist,
-      emission_kgco2e: emission,
-      parameters: { type: 'Average local bus' },
-    });
+    await saveToBackend(activity, dist, emission, state?.cls || null);
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.container}>
-          {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="arrow-back" size={24} color={theme.green} />
@@ -346,46 +270,117 @@ export default function EmissionCalculate() {
             <Text style={styles.title}>Emission Calculator</Text>
           </View>
 
-          {/* Car */}
-          <Section icon="car-outline" title="Car">
-            <Text style={styles.label}>Fuel Type</Text>
-            <ChipGroup options={['Unknown', 'Petrol', 'Diesel', 'Hybrid']} value={fuel} onChange={v => setFuel(v as any)} />
-            <Text style={[styles.label, { marginTop: 12 }]}>Vehicle Size</Text>
-            <ChipGroup options={['Small', 'Medium', 'Large']} value={size} onChange={v => setSize(v as any)} />
-            <LabeledInput label="Distance" value={distance} onChangeText={setDistance} placeholder="e.g., 12.5" keyboardType="numeric" suffix="km" />
-            <ButtonRow onCalc={handleCalculate} onSave={handleSaveCar} />
-            <ResultBadge value={result} />
-          </Section>
+          {factorLoading && <Text style={styles.label}>Loading factors…</Text>}
+          {factorError && (
+            <TouchableOpacity onPress={() => reloadFactors()} activeOpacity={0.8}>
+              <Text style={[styles.label, { color: '#B91C1C' }]}>Failed to load factors. Tap to retry.</Text>
+            </TouchableOpacity>
+          )}
 
-          {/* Motorcycle */}
-          <Section icon="bicycle-outline" title="Motorcycle">
-            <Text style={styles.label}>Motorcycle Size</Text>
-            <ChipGroup options={['Small', 'Medium', 'Large']} value={motorcycleSize} onChange={v => setMotorcycleSize(v as any)} />
-            <LabeledInput label="Distance" value={motorcycleDistance} onChangeText={setMotorcycleDistance} placeholder="e.g., 7" keyboardType="numeric" suffix="km" />
-            <ButtonRow onCalc={handleMotorcycle} onSave={handleSaveMotor} />
-            <ResultBadge value={motorcycleResult} />
-          </Section>
+          {/* Car container (all fuels in one) */}
+          {carFuels.length > 0 && (
+            <Section icon="car-outline" title="Car">
+              <Text style={styles.label}>Fuel Type</Text>
+              <ChipGroup options={carFuels} value={carFuel} onChange={(v) => setCarFuel(v)} scrollable />
 
-          {/* Taxi */}
-          <Section icon="car-sport-outline" title="Taxi">
-            <LabeledInput label="Distance" value={taxiDistance} onChangeText={setTaxiDistance} placeholder="e.g., 15" keyboardType="numeric" suffix="km" />
-            <ButtonRow onCalc={handleTaxi} onSave={handleSaveTaxi} />
-            <ResultBadge value={taxiResult} />
-          </Section>
+              <Text style={[styles.label, { marginTop: 12 }]}>Vehicle Size</Text>
+              <ChipGroup
+                options={(factorData as any)?.[carFuel] ? Object.keys((factorData as any)[carFuel]) : ['Small car', 'Medium car', 'Large car', 'Average car']}
+                value={carSize}
+                onChange={(v) => setCarSize(v)}
+                scrollable
+              />
 
-          {/* Bus */}
-          <Section icon="bus-outline" title="Bus">
-            <LabeledInput label="Distance" value={busDistance} onChangeText={setBusDistance} placeholder="e.g., 22" keyboardType="numeric" suffix="km" />
-            <ButtonRow onCalc={handleBus} onSave={handleSaveBus} />
-            <ResultBadge value={busResult} />
+              <LabeledInput
+                label="Distance"
+                value={carDistance}
+                onChangeText={setCarDistance}
+                placeholder="e.g., 12.5"
+                keyboardType="numeric"
+                suffix="km"
+              />
+            <View style={styles.rowButtons}>
+              <TouchableOpacity style={styles.primaryBtn} onPress={handleCalcCar}>
+                <Text style={styles.primaryBtnText}>Calculate</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.ghostBtn} onPress={handleSaveCar}>
+                <Text style={styles.ghostBtnText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+            <ResultBadge value={carResult} />
           </Section>
+          )}
+
+          {/* Other activities (transport + electricity) */}
+          {activities.map((activity) => {
+            const classes = Object.keys((factorData as any)?.[activity] || {});
+            const state = activityState[activity] || { cls: classes[0] || 'default', amount: '', result: null };
+            const unit = units?.[activity]?.[state.cls] || units?.[activity]?.[classes[0]] || 'km';
+            const label = activity === 'Motorbike' ? 'Motorcycles' : activity;
+            const icon: keyof typeof Ionicons.glyphMap =
+              activity.toLowerCase().includes('flight') ? 'airplane' :
+              activity.toLowerCase().includes('rail') ? 'train' :
+              activity.toLowerCase().includes('bus') ? 'bus' :
+              activity.toLowerCase().includes('ferry') ? 'boat' :
+              activity.toLowerCase().includes('motor') ? 'bicycle' :
+              activity.toLowerCase().includes('electric') ? 'flash' :
+              'car-outline';
+
+            return (
+              <Section key={activity} icon={icon} title={label}>
+                <Text style={styles.label}>Class / Type</Text>
+                <ChipGroup
+                  options={classes.length ? classes : ['default']}
+                  value={state.cls}
+                  onChange={(v) =>
+                    setActivityState((prev) => ({
+                      ...prev,
+                      [activity]: { ...(prev[activity] || {}), cls: v, result: null },
+                    }))
+                  }
+                  scrollable
+                />
+
+                <LabeledInput
+                  label={`Amount (${unit || 'km'})`}
+                  value={state.amount}
+                  onChangeText={(v) =>
+                    setActivityState((prev) => ({
+                      ...prev,
+                      [activity]: { ...(prev[activity] || {}), amount: v },
+                    }))
+                  }
+                  placeholder="Enter value"
+                  keyboardType="numeric"
+                  suffix={unit || 'km'}
+                />
+
+                <ButtonRow onCalc={() => handleCalcActivity(activity)} onSave={() => handleSaveActivity(activity)} />
+                <ResultBadge value={state.result} />
+              </Section>
+            );
+          })}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-// ---- styles ----
+async function postJson(path: string, body: any) {
+  const url = api(path);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    keepalive: true,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  return text ? JSON.parse(text) : {};
+}
+
 const styles = StyleSheet.create({
   container: { padding: 20, paddingBottom: 40 },
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
