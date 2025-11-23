@@ -1,20 +1,23 @@
+// src/backend/routes/admin.js
 const express = require('express');
 const router = express.Router();
+
 const db = require('../config/db');
 const { verifyToken, verifyAdmin } = require('../middleware/auth');
 
-const { uploadBufferToS3, getSignedGetObjectUrl } = require('../utils/s3');
 const multer = require('multer');
 const path = require('path');
 const crypto = require('crypto');
 
-// memory storage สำหรับรับไฟล์จาก form-data
+const { uploadBufferToS3, getSignedGetObjectUrl } = require('../utils/s3');
+
+/* ====================== MULTER (memory) ====================== */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
 });
 
-/* ---------------------- helpers ---------------------- */
+/* ====================== SMALL HELPERS ====================== */
 function buildUpdateSet(allowed, payload) {
   const keys = [];
   const vals = [];
@@ -35,13 +38,12 @@ function pickTable(type) {
   }
   return { table: 'walk_history', label: 'walk' };
 }
-
 /** window string -> SQL date condition using record_date */
 function whereByWindowOrRange({ window, from, to }) {
   const hasRange = from || to;
   if (hasRange) {
     const f = from ? `${from} 00:00:00` : '1970-01-01 00:00:00';
-    const t = to   ? `${to} 23:59:59` : '2999-12-31 23:59:59';
+    const t = to ? `${to} 23:59:59` : '2999-12-31 23:59:59';
     return `record_date BETWEEN '${f}' AND '${t}'`;
   }
   const w = String(window || '').toLowerCase();
@@ -50,11 +52,13 @@ function whereByWindowOrRange({ window, from, to }) {
   if (w === 'this_week') return "YEARWEEK(record_date, 1) = YEARWEEK(CURDATE(), 1)";
   if (w === 'this_month') return "DATE_FORMAT(record_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')";
   if (w === 'all') return "1=1";
-  return "record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+  return "record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)"; // default 30 วัน
 }
 
-/* ====================== Users APIs ====================== */
-router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
+/* ============================================================
+ * Users Admin
+ * ============================================================ */
+router.get('/users', verifyToken, verifyAdmin, async (_req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT
@@ -73,7 +77,7 @@ router.get('/users', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-router.get('/users/min', verifyToken, verifyAdmin, async (req, res) => {
+router.get('/users/min', verifyToken, verifyAdmin, async (_req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT user_id, fname, lname, email
@@ -136,8 +140,7 @@ router.put('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
 
 router.patch('/users/:id/block', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
-    await db.query(`UPDATE users SET status = 0 WHERE user_id = ?`, [id]);
+    await db.query(`UPDATE users SET status = 0 WHERE user_id = ?`, [req.params.id]);
     res.json({ success: true, message: 'User blocked' });
   } catch (err) {
     console.error('PATCH /admin/users/:id/block error:', err);
@@ -146,18 +149,16 @@ router.patch('/users/:id/block', verifyToken, verifyAdmin, async (req, res) => {
 });
 router.patch('/users/:id/unblock', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
-    await db.query(`UPDATE users SET status = 1 WHERE user_id = ?`, [id]);
+    await db.query(`UPDATE users SET status = 1 WHERE user_id = ?`, [req.params.id]);
     res.json({ success: true, message: 'User unblocked' });
   } catch (err) {
-    console.error('PATCH /users/:id/unblock error:', err);
+    console.error('PATCH /admin/users/:id/unblock error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
 router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
-    await db.query(`DELETE FROM users WHERE user_id = ?`, [id]);
+    await db.query(`DELETE FROM users WHERE user_id = ?`, [req.params.id]);
     res.json({ success: true, message: 'User deleted' });
   } catch (err) {
     console.error('DELETE /admin/users/:id error:', err);
@@ -165,8 +166,10 @@ router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Summary API (คงเดิม) ====================== */
-router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
+/* ============================================================
+ * Summary
+ * ============================================================ */
+router.get('/summary', verifyToken, verifyAdmin, async (_req, res) => {
   try {
     const [ovRows] = await db.query(`
       SELECT
@@ -195,7 +198,9 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
       FROM users
       GROUP BY CAST(status AS UNSIGNED)
     `);
-    const [roleRows] = await db.query(`SELECT role, COUNT(*) AS cnt FROM users GROUP BY role`);
+    const [roleRows] = await db.query(`
+      SELECT role, COUNT(*) AS cnt FROM users GROUP BY role
+    `);
     const [vehicleRows] = await db.query(`
       SELECT COALESCE(NULLIF(TRIM(vehicle), ''), '(none)') AS vehicle, COUNT(*) AS cnt
       FROM users
@@ -294,7 +299,9 @@ router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Insights APIs (add time filters) ====================== */
+/* ============================================================
+ * Insights + Leaderboard + Recent
+ * ============================================================ */
 router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { type = 'walk', window, from, to } = req.query;
@@ -404,7 +411,7 @@ router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) =
   }
 });
 
-/* ====================== NEW: Aggregates for Carbon KPIs ====================== */
+/* ---------- Aggregates for Carbon KPIs ---------- */
 router.get('/insights/aggregates', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { window, from, to } = req.query;
@@ -428,21 +435,14 @@ router.get('/insights/aggregates', verifyToken, verifyAdmin, async (req, res) =>
     const carbon_reduced = Number(rows[0]?.carbon_reduced || 0);
     const carbon_emitted = Number(rows[0]?.carbon_emitted || 0);
 
-    res.json({
-      success: true,
-      data: {
-        carbon_reduced,
-        carbon_emitted
-      },
-      meta: { window, from, to, EF_WALK, EF_BIKE }
-    });
+    res.json({ success: true, data: { carbon_reduced, carbon_emitted } });
   } catch (err) {
     console.error('GET /admin/insights/aggregates error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
 
-/* ====================== Recent Activities (site-wide) ====================== */
+/* ---------- Recent Activities ---------- */
 router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { window, from, to } = req.query;
@@ -495,7 +495,7 @@ router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Existing: Activity by user ====================== */
+/* ---------- Activity by user ---------- */
 router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const userId = Number(req.query.user_id || 0);
@@ -560,9 +560,15 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ====================== Rewards (คงเดิม) ====================== */
+/* ============================================================
+ * Rewards CRUD (+ S3 upload)
+ * ============================================================ */
+
+// NOTE: เปลี่ยนเป็น 'rewards' ถ้าตารางคุณมีตัว s
 const REWARD_TABLE = 'reward';
-router.get('/rewards', verifyToken, verifyAdmin, async (req, res) => {
+
+/** List */
+router.get('/rewards', verifyToken, verifyAdmin, async (_req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT id, title, description, image_url, cost_points,
@@ -577,6 +583,8 @@ router.get('/rewards', verifyToken, verifyAdmin, async (req, res) => {
     res.status(500).json({ message: 'DB error on rewards list' });
   }
 });
+
+/** Create */
 router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
   try {
     let { title, description, image_url, cost_points, expires_at, active, stock } = req.body;
@@ -609,6 +617,8 @@ router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
     res.status(500).json({ message: 'DB error on reward create' });
   }
 });
+
+/** Update */
 router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -625,10 +635,7 @@ router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
     if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
     fields.push('updated_at = NOW()');
 
-    await db.query(
-      `UPDATE ${REWARD_TABLE} SET ${fields.join(', ')} WHERE id = ?`,
-      [...values, id]
-    );
+    await db.query(`UPDATE ${REWARD_TABLE} SET ${fields.join(', ')} WHERE id = ?`, [...values, id]);
     const [rows] = await db.query(`
       SELECT id, title, description, image_url, cost_points,
              expires_at, CAST(active AS UNSIGNED) AS active,
@@ -642,20 +649,22 @@ router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
     res.status(500).json({ message: 'DB error on reward update' });
   }
 });
+
+/** Toggle active */
 router.patch('/rewards/:id/toggle', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
-    await db.query(`UPDATE ${REWARD_TABLE} SET active = 1 - active, updated_at = NOW() WHERE id = ?`, [id]);
+    await db.query(`UPDATE ${REWARD_TABLE} SET active = 1 - active, updated_at = NOW() WHERE id = ?`, [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     console.error('PATCH /admin/rewards/:id/toggle error:', err);
     res.status(500).json({ message: 'DB error on toggle' });
   }
 });
+
+/** Delete */
 router.delete('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
-    await db.query(`DELETE FROM ${REWARD_TABLE} WHERE id = ?`, [id]);
+    await db.query(`DELETE FROM ${REWARD_TABLE} WHERE id = ?`, [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE /admin/rewards/:id error:', err);
@@ -663,7 +672,11 @@ router.delete('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
-/* ---------- Upload image (no ACL) ---------- */
+/* ============================================================
+ * S3 Upload + Public File Redirect
+ * ============================================================ */
+
+/** Upload to S3 (protected) */
 router.post(
   '/rewards/upload',
   verifyToken,
@@ -676,7 +689,7 @@ router.post(
 
       const ext = path.extname(file.originalname || '').toLowerCase() || '.bin';
       const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-      const key = `reward/${filename}`; // force under reward/
+      const key = `reward/${filename}`; // เก็บใต้โฟลเดอร์ reward/
 
       await uploadBufferToS3({
         buffer: file.buffer,
@@ -684,9 +697,9 @@ router.post(
         key,
       });
 
-      // public URL = our route that redirects to signed URL (use query string to avoid path-to-regexp issues)
+      // NOTE: ใช้ prefix /api/admin เพราะ index.js mount ไว้แบบนี้
       const base = `${req.protocol}://${req.get('host')}`;
-      const publicUrl = `${base}/admin/rewards/file?key=${encodeURIComponent(key)}`;
+      const publicUrl = `${base}/api/admin/rewards/file?key=${encodeURIComponent(key)}`;
 
       return res.json({ success: true, url: publicUrl, key });
     } catch (err) {
@@ -696,8 +709,8 @@ router.post(
   }
 );
 
-/* ---------- Serve signed URL via redirect (query string) ---------- */
-router.get('/rewards/file', verifyToken, verifyAdmin, async (req, res) => {
+/** Public: serve signed URL via redirect (querystring to avoid path-to-regexp issues) */
+router.get('/rewards/file', async (req, res) => {
   try {
     const rawKey = req.query.key || '';
     const key = decodeURIComponent(String(rawKey));
@@ -705,8 +718,8 @@ router.get('/rewards/file', verifyToken, verifyAdmin, async (req, res) => {
     if (!key.startsWith('reward/')) {
       return res.status(400).send('invalid key');
     }
-
-    const signed = await getSignedGetObjectUrl(key, 60 * 60); // 1h
+    // ลิงก์หมดอายุใน 1 ชม.
+    const signed = await getSignedGetObjectUrl(key, 60 * 60);
     return res.redirect(302, signed);
   } catch (err) {
     console.error('GET /admin/rewards/file error:', err);
