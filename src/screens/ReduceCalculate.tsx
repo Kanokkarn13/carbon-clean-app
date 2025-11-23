@@ -1,5 +1,5 @@
 // src/screens/ReduceCalculate.tsx
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { calculateEmission, emissionData } from '../hooks/calculateEmission';
+import { calculateEmission, useEmissionFactors, loadEmissionData } from '../hooks/calculateEmission';
 
 const theme = {
   primary: '#07F890',
@@ -177,6 +177,10 @@ export default function ReduceCalculate() {
   const navigation = useNavigation();
   const route = useRoute<any>();
   const user = (route?.params && (route.params as any).user) || undefined;
+  const {
+    data: factorData,
+    reload: reloadFactors,
+  } = useEmissionFactors();
 
   const [fromVehicle, setFromVehicle] = useState<(typeof VEHICLES)[number]>('Car');
   const [fromFuel, setFromFuel] = useState<(typeof FUELS)[number]>('Petrol');
@@ -194,29 +198,56 @@ export default function ReduceCalculate() {
   const [electricReduction, setElectricReduction] = useState<number | null>(null);
 
   const getVehicleClasses = (vehicle: string, fuel?: string) => {
+    const source: any = factorData;
     if (vehicle === 'Car') {
-      const table = (emissionData as any)[fuel || 'Petrol'];
+      const table = source[fuel || 'Petrol'];
       return table ? Object.keys(table) : [];
     }
-    const table = (emissionData as any)[vehicle];
+    const table = source[vehicle];
     return table ? Object.keys(table) : [];
   };
 
   const fromClassOptions = useMemo(
     () => getVehicleClasses(fromVehicle, fromFuel),
-    [fromVehicle, fromFuel]
+    [fromVehicle, fromFuel, factorData]
   );
   const toClassOptions = useMemo(
     () => getVehicleClasses(toVehicle, toFuel || undefined),
-    [toVehicle, toFuel]
+    [toVehicle, toFuel, factorData]
   );
+
+  useEffect(() => {
+    if (fromClassOptions.length && !fromClassOptions.includes(fromSize)) {
+      setFromSize(fromClassOptions[0]);
+    }
+  }, [fromClassOptions, fromSize]);
+
+  useEffect(() => {
+    if (toClassOptions.length && !toClassOptions.includes(toSize)) {
+      setToSize(toClassOptions[0]);
+    }
+  }, [toClassOptions, toSize]);
 
   const parseNum = (v: string) => {
     const n = parseFloat(v);
     return Number.isFinite(n) && n > 0 ? n : null;
   };
 
-  const handleCalculate = () => {
+  const ensureFactorsReady = async () => {
+    try {
+      await loadEmissionData();
+      return true;
+    } catch (err: any) {
+      Alert.alert('Emission factors unavailable', err?.message || 'Could not load emission data.', [
+        { text: 'Retry', onPress: () => reloadFactors() },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+      return false;
+    }
+  };
+
+  const handleCalculate = async () => {
+    if (!(await ensureFactorsReady())) return;
     const dist = parseNum(distance);
     if (dist == null) return Alert.alert('Invalid distance', 'Please enter a positive number.');
 
@@ -250,6 +281,7 @@ export default function ReduceCalculate() {
 
   // --- Save transport reduction ---
   const handleSave = async () => {
+    if (!(await ensureFactorsReady())) return;
     if (!userId || userId <= 0) {
       Alert.alert('Login required', 'Please log in before saving.');
       return;

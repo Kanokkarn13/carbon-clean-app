@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { pickUser, saveUser, updateUser, uploadProfileImage } from '../services/authService';
-import { emissionData } from '../hooks/calculateEmission';
+import { useEmissionFactors } from '../hooks/calculateEmission';
 
 const theme = {
   primary: '#07F890',
@@ -103,6 +103,7 @@ const ProfileEdit = () => {
   const [fuelType, setFuelType] = useState<(typeof FUEL_TYPES)[number]>('Petrol');
   const [vehicleClass, setVehicleClass] = useState<string>('Small car');
   const [saving, setSaving] = useState(false);
+  const { data: factorData, reload: reloadFactors } = useEmissionFactors();
 
   useEffect(() => {
     if (typeof user.vehicle === 'string' && user.vehicle.includes(',')) {
@@ -114,15 +115,23 @@ const ProfileEdit = () => {
   }, [user.vehicle]);
 
   const getFuelOptions = (type: string) => (type === 'Cars' ? FUEL_TYPES : (['Unknown'] as const));
-  const getClassOptions = (type: string, fuel: string) =>
-    type === 'Cars'
-      ? Object.keys(emissionData[fuel] || {})
-      : Object.keys(emissionData[type] || {});
+  const getClassOptions = (type: string, fuel: string) => {
+    const source: any = factorData;
+    return type === 'Cars'
+      ? Object.keys(source[fuel] || {})
+      : Object.keys(source[type] || {});
+  };
 
   const classOptions = useMemo(
     () => getClassOptions(vehicleType, fuelType),
-    [vehicleType, fuelType]
+    [vehicleType, fuelType, factorData]
   );
+
+  useEffect(() => {
+    if (classOptions.length && !classOptions.includes(vehicleClass)) {
+      setVehicleClass(classOptions[0]);
+    }
+  }, [classOptions, vehicleClass]);
 
   const onChangeVehicleType = (t: (typeof VEHICLE_TYPES)[number]) => {
     setVehicleType(t);

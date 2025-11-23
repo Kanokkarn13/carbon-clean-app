@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../config/db');
 const { saveTransportEmission, listSavedActivities } = require('../controllers/saveEmissionController');
+const { listEmissionFactors } = require('../controllers/emissionFactorController');
 const { saveWalking, updateWalkingCarbon } = require('../controllers/saveWalkingController');
 const { saveCycling, updateCyclingCarbon } = require('../controllers/saveCyclingController');
 
@@ -117,6 +118,7 @@ router.post('/save-cycling', saveCycling);
 /* ---------------- transport emission save + list ---------------- */
 router.post('/emission', saveTransportEmission);
 router.get('/saved/:user_id', listSavedActivities);
+router.get('/emission/factors', listEmissionFactors);
 
 /* ---------------- carbon patch (optional, from CarbonOffsetScreen) ---------------- */
 router.patch('/walking/:id/carbon', updateWalkingCarbon);

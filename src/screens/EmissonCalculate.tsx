@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { calculateEmission } from '../hooks/calculateEmission';
+import { calculateEmission, useEmissionFactors, loadEmissionData } from '../hooks/calculateEmission';
 
 // ---- เก็บ type ให้ตรงกับ HomeStack.tsx ----
 type ActivityType = 'Cycling' | 'Walking';
@@ -144,6 +144,7 @@ export default function EmissionCalculate() {
   const route = useRoute<RouteProp<RootStackParamList,'EmissonCalculate'>>();
   const user = route.params?.user;
   const userId = Number(user?.user_id ?? user?.id);
+  const { reload: reloadFactors } = useEmissionFactors();
 
   // ---- States ----
   const [fuel, setFuel] = useState<'Unknown' | 'Petrol' | 'Diesel' | 'Hybrid'>('Unknown');
@@ -220,18 +221,35 @@ export default function EmissionCalculate() {
   };
 
   // ---- Handlers ----
-  const handleCalculate = () => {
+  const ensureFactorsReady = async () => {
+    try {
+      await loadEmissionData();
+      return true;
+    } catch (err: any) {
+      Alert.alert('Emission factors unavailable', err?.message || 'Could not load emission data.', [
+        { text: 'Retry', onPress: () => reloadFactors() },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+      return false;
+    }
+  };
+
+  const handleCalculate = async () => {
+    if (!(await ensureFactorsReady())) return;
     const dist = parseKm(distance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
     const emission = calculateEmission(fuel, `${size} car`, dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     setResult(`${emission} kgCO₂e`);
   };
 
-  const handleSaveCar = () => {
+  const handleSaveCar = async () => {
     if (!requireUser()) return;
+    if (!(await ensureFactorsReady())) return;
     const dist = parseKm(distance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
     const emission = calculateEmission(fuel, `${size} car`, dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     confirmAndSave({
       user_id: userId,
       activity_type: 'Car',
@@ -241,18 +259,22 @@ export default function EmissionCalculate() {
     });
   };
 
-  const handleMotorcycle = () => {
+  const handleMotorcycle = async () => {
+    if (!(await ensureFactorsReady())) return;
     const dist = parseKm(motorcycleDistance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
     const emission = calculateEmission('Motorbike', motorcycleSize, dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     setMotorcycleResult(`${emission} kgCO₂e`);
   };
 
-  const handleSaveMotor = () => {
+  const handleSaveMotor = async () => {
     if (!requireUser()) return;
+    if (!(await ensureFactorsReady())) return;
     const dist = parseKm(motorcycleDistance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
     const emission = calculateEmission('Motorbike', motorcycleSize, dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     confirmAndSave({
       user_id: userId,
       activity_type: 'Motorcycle',
@@ -262,18 +284,22 @@ export default function EmissionCalculate() {
     });
   };
 
-  const handleTaxi = () => {
+  const handleTaxi = async () => {
+    if (!(await ensureFactorsReady())) return;
     const dist = parseKm(taxiDistance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
     const emission = calculateEmission('Taxis', 'Regular taxi', dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     setTaxiResult(`${emission} kgCO₂e`);
   };
 
-  const handleSaveTaxi = () => {
+  const handleSaveTaxi = async () => {
     if (!requireUser()) return;
+    if (!(await ensureFactorsReady())) return;
     const dist = parseKm(taxiDistance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
     const emission = calculateEmission('Taxis', 'Regular taxi', dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     confirmAndSave({
       user_id: userId,
       activity_type: 'Taxi',
@@ -283,18 +309,22 @@ export default function EmissionCalculate() {
     });
   };
 
-  const handleBus = () => {
+  const handleBus = async () => {
+    if (!(await ensureFactorsReady())) return;
     const dist = parseKm(busDistance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
     const emission = calculateEmission('Bus', 'Average local bus', dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     setBusResult(`${emission} kgCO₂e`);
   };
 
-  const handleSaveBus = () => {
+  const handleSaveBus = async () => {
     if (!requireUser()) return;
+    if (!(await ensureFactorsReady())) return;
     const dist = parseKm(busDistance);
     if (!dist) return Alert.alert('Invalid', 'Enter valid distance');
     const emission = calculateEmission('Bus', 'Average local bus', dist);
+    if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     confirmAndSave({
       user_id: userId,
       activity_type: 'Bus',
