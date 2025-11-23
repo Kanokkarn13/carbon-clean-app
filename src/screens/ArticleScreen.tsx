@@ -8,6 +8,7 @@ import {
   StyleSheet,
   SafeAreaView,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -37,7 +38,70 @@ type Article = {
 };
 
 function stripHtml(html: string) {
-  return html.replace(/<[^>]*>/g, '').trim();
+  return (html || '').replace(/<[^>]*>/g, '').trim();
+}
+
+type InlineSpan = { value: string; bold?: boolean; italic?: boolean };
+
+function parseInline(html: string): InlineSpan[] {
+  const spans: InlineSpan[] = [];
+  if (!html) return spans;
+
+  const normalized = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '');
+  const tagRe = /<(\/?)(strong|b|em|i)>/gi;
+  let bold = false;
+  let italic = false;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  const pushText = (text: string) => {
+    if (!text) return;
+    const clean = text.replace(/<[^>]*>/g, '');
+    if (clean) spans.push({ value: clean, bold, italic });
+  };
+
+  while ((match = tagRe.exec(normalized)) !== null) {
+    const textPart = normalized.slice(lastIndex, match.index);
+    pushText(textPart);
+    const closing = match[1] === '/';
+    const tag = match[2].toLowerCase();
+    if (tag === 'strong' || tag === 'b') bold = !closing;
+    if (tag === 'em' || tag === 'i') italic = !closing;
+    lastIndex = tagRe.lastIndex;
+  }
+
+  pushText(normalized.slice(lastIndex));
+  return spans;
+}
+
+type ContentBlock = { type: 'text'; spans: InlineSpan[] } | { type: 'image'; src: string };
+
+function parseContent(html: string): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+  if (!html) return blocks;
+  const imgRe = /<img[^>]+src\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = imgRe.exec(html)) !== null) {
+    const textPart = html.slice(lastIndex, match.index);
+    const spans = parseInline(textPart);
+    if (spans.length) blocks.push({ type: 'text', spans });
+
+    const src = match[1];
+    if (src) blocks.push({ type: 'image', src });
+
+    lastIndex = imgRe.lastIndex;
+  }
+
+  const tail = html.slice(lastIndex);
+  const tailSpans = parseInline(tail);
+  if (tailSpans.length) blocks.push({ type: 'text', spans: tailSpans });
+
+  return blocks.length ? blocks : [{ type: 'text', spans: parseInline(html) }];
 }
 
 const ArticlesScreen = () => {
@@ -45,6 +109,7 @@ const ArticlesScreen = () => {
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Article | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -71,10 +136,10 @@ const ArticlesScreen = () => {
   }, []);
 
   const renderItem = ({ item }: { item: Article }) => {
-    const preview = useMemo(() => stripHtml(item.content || '').slice(0, 140), [item.content]);
+    const preview = stripHtml(item.content || '').slice(0, 140);
     const date = item.create_at ? new Date(item.create_at).toLocaleDateString('en-GB') : '';
     return (
-      <View style={styles.card}>
+      <TouchableOpacity onPress={() => setSelected(item)} activeOpacity={0.9} style={styles.card}>
         {item.cover_image_url ? (
           <Image source={{ uri: item.cover_image_url }} style={styles.image} />
         ) : (
@@ -85,15 +150,19 @@ const ArticlesScreen = () => {
         <View style={styles.cardContent}>
           <Text style={styles.cardTitle}>{item.title || 'Untitled'}</Text>
           <Text style={styles.cardDate}>{date}</Text>
-          <Text numberOfLines={3} style={styles.cardPreview}>{preview || 'No summary available.'}</Text>
         </View>
-        <TouchableOpacity style={styles.readButton} activeOpacity={0.9}>
+        <View style={styles.readButton}>
           <Ionicons name="book-outline" size={16} color={theme.primaryDark} />
           <Text style={styles.readButtonText}>Read</Text>
-        </TouchableOpacity>
-      </View>
+        </View>
+      </TouchableOpacity>
     );
   };
+
+  const detailBlocks = useMemo(() => parseContent(selected?.content || ''), [selected?.content]);
+  const detailDate = selected?.create_at ? new Date(selected.create_at).toLocaleDateString('en-GB') : '';
+
+  const showBack = !!selected;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -102,17 +171,46 @@ const ArticlesScreen = () => {
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.headerSide}
-            onPress={() => navigation.goBack?.()}
+            onPress={() => (showBack ? setSelected(null) : navigation.goBack?.())}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <Ionicons name="arrow-back" size={22} color={theme.primary} />
           </TouchableOpacity>
-          <Text style={styles.title}>Articles</Text>
-          <View style={styles.headerSide} />{/* spacer keeps title centered */}
+          <Text style={styles.title}>{showBack ? 'Article' : 'Articles'}</Text>
+          <View style={styles.headerSide} />
         </View>
 
         {/* Article List */}
-        {loading ? (
+        {selected ? (
+          <ScrollView contentContainerStyle={[styles.detailWrap, { paddingBottom: 32 }]} showsVerticalScrollIndicator={false}>
+            <Text style={[styles.cardTitle, { fontSize: 20, marginTop: 10 }]}>{selected.title || 'Untitled'}</Text>
+            {selected.cover_image_url ? (
+              <Image source={{ uri: selected.cover_image_url }} style={[styles.image, { borderRadius: 12, marginTop: 8 }]} />
+            ) : null}
+            <Text style={[styles.cardDate, { marginTop: 4 }]}>{detailDate}</Text>
+            <View style={{ marginTop: 12, gap: 12 }}>
+              {detailBlocks.map((b, idx) =>
+                b.type === 'image' ? (
+                  <Image key={`img-${idx}`} source={{ uri: b.src }} style={[styles.image, { borderRadius: 12 }]} />
+                ) : (
+                  <Text key={`txt-${idx}`} style={[styles.cardPreview, { lineHeight: 20 }]}>
+                    {b.spans.map((s, i) => (
+                      <Text
+                        key={`span-${idx}-${i}`}
+                        style={[
+                          s.bold && styles.bold,
+                          s.italic && styles.italic,
+                        ]}
+                      >
+                        {s.value}
+                      </Text>
+                    ))}
+                  </Text>
+                )
+              )}
+            </View>
+          </ScrollView>
+        ) : loading ? (
           <View style={styles.center}>
             <ActivityIndicator />
             <Text style={styles.cardDate}>Loading…</Text>
@@ -210,4 +308,8 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   center: { alignItems: 'center', marginTop: 20 },
+  detailWrap: { paddingHorizontal: 4 },
+  backRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 6 },
+  bold: { fontWeight: '700' },
+  italic: { fontStyle: 'italic' },
 });
