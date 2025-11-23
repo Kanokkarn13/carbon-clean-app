@@ -24,6 +24,7 @@ const {
   deleteReduction,
 } = require('./controllers/saveReductionController');
 const profileRoutes = require('./routes/profileRoutes');
+const articleRoutes = require('./routes/articleRoutes');
 
 const app = express();
 
@@ -84,6 +85,7 @@ app.delete('/api/reduction/:id', deleteReduction);
 
 /* -------------------- Profile -------------------- */
 app.use('/api', profileRoutes);
+app.use('/api', articleRoutes);
 
 /* -------------------- Recent Activity (walking/cycling history) -------------------- */
 app.use('/api', activityRoutes);

@@ -119,7 +119,8 @@ function ResultBadge({ value }: { value: string | null }) {
   );
 }
 
-type ActivityState = Record<string, { cls: string; amount: string; result: string | null }>;
+type ActivityEntry = { cls: string; amount: string; result: string | null; typeKey?: string };
+type ActivityState = Record<string, ActivityEntry>;
 
 export default function EmissionCalculate() {
   const navigation = useNavigation();
@@ -164,10 +165,19 @@ export default function EmissionCalculate() {
     const next: ActivityState = {};
     activities.forEach((act) => {
       const classes = Object.keys((factorData as any)?.[act] || {});
+      // For flights, split "Type - Class" into parts for UI
+      let firstType = '';
+      let firstClass = classes[0] || 'default';
+      if (act === 'Flights' && classes.length) {
+        const parts = classes[0].split(' - ');
+        firstType = parts[0] || '';
+        firstClass = parts.slice(1).join(' - ') || parts[0] || 'default';
+      }
       next[act] = {
         cls: activityState[act]?.cls || classes[0] || 'default',
         amount: activityState[act]?.amount || '',
         result: activityState[act]?.result || null,
+        typeKey: activityState[act]?.typeKey || firstType,
       };
     });
     setActivityState(next);
@@ -205,7 +215,13 @@ export default function EmissionCalculate() {
     const state = activityState[activity];
     const dist = parseAmount(state?.amount || '');
     if (!dist) return Alert.alert('Invalid', 'Enter valid amount');
-    const emission = calculateEmission(activity, state?.cls, dist);
+    const targetClass =
+      activity === 'Flights' && state?.typeKey
+        ? state.typeKey && state.cls
+          ? `${state.typeKey} - ${state.cls}`
+          : state.cls
+        : state?.cls;
+    const emission = calculateEmission(activity, targetClass || '', dist);
     if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
     setActivityState((prev) => ({
       ...prev,
@@ -254,9 +270,15 @@ export default function EmissionCalculate() {
     const state = activityState[activity];
     const dist = parseAmount(state?.amount || '');
     if (!dist) return Alert.alert('Invalid', 'Enter valid amount');
-    const emission = calculateEmission(activity, state?.cls, dist);
+    const targetClass =
+      activity === 'Flights' && state?.typeKey
+        ? state.typeKey && state.cls
+          ? `${state.typeKey} - ${state.cls}`
+          : state.cls
+        : state?.cls;
+    const emission = calculateEmission(activity, targetClass || '', dist);
     if (typeof emission !== 'number') return Alert.alert('Factor missing', String(emission));
-    await saveToBackend(activity, dist, emission, state?.cls || null);
+    await saveToBackend(activity, dist, emission, targetClass || null);
   };
 
   return (
@@ -326,6 +348,74 @@ export default function EmissionCalculate() {
               activity.toLowerCase().includes('electric') ? 'flash' :
               'car-outline';
 
+            // Special handling for Flights: separate type (route) and class chips
+            if (activity === 'Flights') {
+              const typeOptions = Array.from(
+                new Set(
+                  classes
+                    .map((c) => c.split(' - ')[0] || '')
+                    .filter(Boolean)
+                )
+              );
+              const selectedType = state.typeKey && typeOptions.includes(state.typeKey) ? state.typeKey : typeOptions[0] || '';
+              const classOptions = classes
+                .filter((c) => c.startsWith(`${selectedType} - `))
+                .map((c) => c.split(' - ').slice(1).join(' - '))
+                .filter(Boolean);
+              const selectedClass = classOptions.includes(state.cls) ? state.cls : classOptions[0] || '';
+              const unitFlights =
+                (units?.[activity]?.[`${selectedType} - ${selectedClass}`]) ||
+                (units?.[activity]?.[classes[0]]) ||
+                'passenger.km';
+
+              return (
+                <Section key={activity} icon={icon} title="Flights">
+                  <Text style={styles.label}>Route type</Text>
+                  <ChipGroup
+                    options={typeOptions.length ? typeOptions : ['Domestic']}
+                    value={selectedType}
+                    onChange={(v) =>
+                      setActivityState((prev) => ({
+                        ...prev,
+                        [activity]: { ...(prev[activity] || {}), typeKey: v, cls: '', result: null },
+                      }))
+                    }
+                    scrollable
+                  />
+
+                  <Text style={[styles.label, { marginTop: 12 }]}>Cabin / Passenger class</Text>
+                  <ChipGroup
+                    options={classOptions.length ? classOptions : ['Average passenger']}
+                    value={selectedClass}
+                    onChange={(v) =>
+                      setActivityState((prev) => ({
+                        ...prev,
+                        [activity]: { ...(prev[activity] || {}), cls: v, typeKey: selectedType, result: null },
+                      }))
+                    }
+                    scrollable
+                  />
+
+                  <LabeledInput
+                    label="Distance (km)"
+                    value={state.amount}
+                    onChangeText={(v) =>
+                      setActivityState((prev) => ({
+                        ...prev,
+                        [activity]: { ...(prev[activity] || {}), amount: v, cls: selectedClass, typeKey: selectedType },
+                      }))
+                    }
+                    placeholder="e.g., 1200"
+                    keyboardType="numeric"
+                    suffix="km"
+                  />
+
+                  <ButtonRow onCalc={() => handleCalcActivity(activity)} onSave={() => handleSaveActivity(activity)} />
+                  <ResultBadge value={state.result} />
+                </Section>
+              );
+            }
+
             return (
               <Section key={activity} icon={icon} title={label}>
                 <Text style={styles.label}>Class / Type</Text>
@@ -342,7 +432,7 @@ export default function EmissionCalculate() {
                 />
 
                 <LabeledInput
-                  label={`Amount (${unit || 'km'})`}
+                  label="Distance (km)"
                   value={state.amount}
                   onChangeText={(v) =>
                     setActivityState((prev) => ({
@@ -350,9 +440,9 @@ export default function EmissionCalculate() {
                       [activity]: { ...(prev[activity] || {}), amount: v },
                     }))
                   }
-                  placeholder="Enter value"
+                  placeholder="Enter km"
                   keyboardType="numeric"
-                  suffix={unit || 'km'}
+                  suffix="km"
                 />
 
                 <ButtonRow onCalc={() => handleCalcActivity(activity)} onSave={() => handleSaveActivity(activity)} />
