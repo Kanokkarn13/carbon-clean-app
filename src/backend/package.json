@@ -5,7 +5,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "backfill:points": "node scripts/backfillPoints.js"
+    "backfill:points": "echo \"backfill removed\"",
+    "backfill:points:legacy": "echo \"backfill removed\""
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.937.0",

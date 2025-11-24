@@ -1,6 +1,17 @@
 // src/config/db.js
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
 const mysql = require('mysql2/promise');
+
+/**
+ * Load env from multiple locations (backend/.env and project root .env)
+ * so running from backend or repo root both work.
+ */
+const envPaths = [
+  path.resolve(__dirname, '..', '.env'),
+  path.resolve(__dirname, '..', '..', '..', '.env'),
+];
+envPaths.forEach((p) => dotenv.config({ path: p, override: false }));
 
 /**
  * ✅ MySQL Connection Pool for AWS RDS

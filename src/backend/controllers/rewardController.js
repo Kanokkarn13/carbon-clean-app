@@ -66,6 +66,30 @@ const mapRedemptionRow = (row = {}) => ({
     row.reward_cost_points != null ? Number(row.reward_cost_points) : null,
 });
 
+async function getPointsSummary(userId, conn = db) {
+  const [[walkRow]] = await conn.query(
+    'SELECT COALESCE(SUM(points),0) AS total FROM walk_history WHERE user_id = ?',
+    [userId],
+  );
+  const [[bikeRow]] = await conn.query(
+    'SELECT COALESCE(SUM(points),0) AS total FROM bic_history WHERE user_id = ?',
+    [userId],
+  );
+  const [[spentRow]] = await conn.query(
+    `
+      SELECT COALESCE(SUM(cost_points),0) AS total
+      FROM reward_redemption
+      WHERE user_id = ? AND status IN ('pending','approved','used','expired')
+    `,
+    [userId],
+  );
+
+  const earned = Number(walkRow?.total || 0) + Number(bikeRow?.total || 0);
+  const spent = Number(spentRow?.total || 0);
+  const available = Math.max(0, earned - spent);
+  return { earned, spent, available };
+}
+
 exports.listRedemptions = async function listRedemptions(req, res) {
   const rawUserId =
     req.params?.user_id ??
@@ -120,6 +144,27 @@ exports.listRedemptions = async function listRedemptions(req, res) {
   }
 };
 
+exports.getPointsBalance = async function getPointsBalance(req, res) {
+  const rawUserId =
+    req.params?.user_id ??
+    req.query?.user_id ??
+    req.query?.userId ??
+    req.body?.user_id;
+  const userId = Number(rawUserId);
+
+  if (!userId || !Number.isFinite(userId)) {
+    return res.status(400).json({ error: 'Missing or invalid user_id parameter' });
+  }
+
+  try {
+    const summary = await getPointsSummary(userId);
+    return res.json(summary);
+  } catch (error) {
+    console.error('[rewardController] getPointsBalance error:', error);
+    return res.status(500).json({ error: 'Failed to load points balance' });
+  }
+};
+
 exports.redeemReward = async function redeemReward(req, res) {
   const rawUserId =
     req.body?.user_id ??
@@ -139,22 +184,14 @@ exports.redeemReward = async function redeemReward(req, res) {
   try {
     await conn.beginTransaction();
 
-    const [userRows] = await conn.query(
-      'SELECT * FROM users WHERE user_id = ? FOR UPDATE',
-      [userId],
-    );
+    const [userRows] = await conn.query('SELECT * FROM users WHERE user_id = ? FOR UPDATE', [
+      userId,
+    ]);
     const userRow = Array.isArray(userRows) ? userRows[0] : null;
     if (!userRow) {
       await conn.rollback();
       return res.status(404).json({ error: 'User not found' });
     }
-
-    const pointColumn = pickPointColumn(userRow);
-    if (!pointColumn) {
-      await conn.rollback();
-      return res.status(500).json({ error: 'User points column is missing' });
-    }
-    const currentPoints = Number(userRow[pointColumn]) || 0;
 
     const [rewardRows] = await conn.query(
       'SELECT * FROM reward WHERE id = ? FOR UPDATE',
@@ -193,15 +230,18 @@ exports.redeemReward = async function redeemReward(req, res) {
       await conn.rollback();
       return res.status(400).json({ error: 'Reward is out of stock' });
     }
-    if (currentPoints < rewardCost) {
-      await conn.rollback();
-      return res.status(400).json({ error: 'Insufficient points' });
-    }
 
-    await conn.query(
-      `UPDATE users SET ${pointColumn} = ${pointColumn} - ? WHERE user_id = ?`,
-      [rewardCost, userId],
-    );
+    const { available, earned, spent } = await getPointsSummary(userId, conn);
+    if (available < rewardCost) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: 'Insufficient points',
+        available,
+        required: rewardCost,
+        earned,
+        spent,
+      });
+    }
 
     if (rewardStock !== null) {
       await conn.query('UPDATE reward SET stock = GREATEST(stock - 1, 0) WHERE id = ?', [
