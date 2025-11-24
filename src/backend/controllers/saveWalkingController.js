@@ -1,5 +1,6 @@
 // src/backend/controllers/saveWalkingController.js
 const db = require('../config/db');
+const { evaluateActivityPoints } = require('../utils/points');
 
 /* ---------- helpers ---------- */
 function nowGMT7() {
@@ -58,16 +59,23 @@ exports.saveWalking = async (req, res) => {
     const stepsVal      = step_total == null ? null : toNum(step_total, null);
     const durationVal   = duration_sec == null ? null : toNum(duration_sec, null);
 
+    const points = evaluateActivityPoints({
+      type: 'Walking',
+      distance_km: distanceVal,
+      step_total: stepsVal,
+      duration_sec: durationVal,
+    });
+
     const recordAt = nowGMT7();
 
     const [result] = await db.query(
       `INSERT INTO walk_history
-         (user_id, title, description, distance_km, carbonReduce, step_total, duration_sec, record_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [user_id, title, description, distanceVal, carbonValue, stepsVal, durationVal, recordAt]
+         (user_id, title, description, distance_km, carbonReduce, step_total, duration_sec, points, record_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [user_id, title, description, distanceVal, carbonValue, stepsVal, durationVal, points, recordAt]
     );
 
-    console.log('[saveWalking] inserted:', { insertId: result?.insertId, carbonReduce: carbonValue });
+    console.log('[saveWalking] inserted:', { insertId: result?.insertId, carbonReduce: carbonValue, points });
 
     return res.status(200).json({
       ok: true,
@@ -75,6 +83,7 @@ exports.saveWalking = async (req, res) => {
       record_date: recordAt,
       insertId: result?.insertId ?? null,
       carbonReduce: carbonValue,
+      points,
     });
   } catch (err) {
     console.error('❌ Walking Save Error:', err);

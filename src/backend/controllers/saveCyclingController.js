@@ -1,5 +1,6 @@
 // controllers/saveCyclingController.js
 const db = require('../config/db');
+const { evaluateActivityPoints } = require('../utils/points');
 
 /* ---------- helpers ---------- */
 function nowGMT7() {
@@ -48,16 +49,22 @@ exports.saveCycling = async (req, res) => {
     const carbonVal   = toNum(carbonReduce, 0);
     const durationVal = duration_sec == null ? null : toNum(duration_sec, null);
 
+    const points = evaluateActivityPoints({
+      type: 'Cycling',
+      distance_km: distanceVal,
+      duration_sec: durationVal,
+    });
+
     const recordAt = nowGMT7();
 
     const [result] = await db.query(
       `INSERT INTO bic_history
-         (user_id, title, description, distance_km, carbonReduce, duration_sec, record_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [user_id, title, description, distanceVal, carbonVal, durationVal, recordAt]
+         (user_id, title, description, distance_km, carbonReduce, duration_sec, points, record_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [user_id, title, description, distanceVal, carbonVal, durationVal, points, recordAt]
     );
 
-    console.log('[saveCycling] inserted:', { insertId: result?.insertId, carbonReduce: carbonVal });
+    console.log('[saveCycling] inserted:', { insertId: result?.insertId, carbonReduce: carbonVal, points });
 
     return res.status(200).json({
       ok: true,
@@ -65,6 +72,7 @@ exports.saveCycling = async (req, res) => {
       record_date: recordAt,
       insertId: result?.insertId ?? null,
       carbonReduce: carbonVal,
+      points,
     });
   } catch (err) {
     console.error('❌ Cycling Save Error:', err);
