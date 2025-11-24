@@ -278,40 +278,63 @@ router.delete('/cycling/:id', async (req, res) => {
   }
 });
 
-/* ---------------- leaderboard: carbon reduction (walk + bike) ---------------- */
+/* ---------------- leaderboard: carbon reduction (walk + bike) OR distance ---------------- */
 router.get('/leaderboard/carbon', async (req, res) => {
   try {
-    const days = Math.max(1, Math.min(Number(req.query.days || 30), 365));
     const limit = Math.max(1, Math.min(Number(req.query.limit || 10), 50));
+    const metric = String(req.query.metric || 'carbon').toLowerCase() === 'distance' ? 'distance' : 'carbon';
 
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-    const sinceStr = since.toISOString().slice(0, 19).replace('T', ' ');
+    // Accept explicit start/end (YYYY-MM-DD or datetime), fallback to ?days
+    let startStr = req.query.start ? String(req.query.start) : null;
+    let endStr = req.query.end ? String(req.query.end) : null;
+    if (!startStr || !endStr) {
+      const days = Math.max(1, Math.min(Number(req.query.days || 30), 365));
+      const start = new Date();
+      start.setDate(start.getDate() - days);
+      const end = new Date();
+      startStr = start.toISOString().slice(0, 19).replace('T', ' ');
+      endStr = end.toISOString().slice(0, 19).replace('T', ' ');
+    }
+
+    const selector =
+      metric === 'distance'
+        ? {
+            walk: 'SUM(distance_km)',
+            bike: 'SUM(distance_km)',
+            alias: 'total_distance',
+            label: 'km',
+          }
+        : {
+            walk: 'SUM(carbonReduce)',
+            bike: 'SUM(carbonReduce)',
+            alias: 'total_carbon',
+            label: 'kg',
+          };
 
     const sql = `
       SELECT
         u.user_id,
         TRIM(CONCAT(COALESCE(u.fname, ''), ' ', COALESCE(u.lname, ''))) AS name,
-        COALESCE(w.total_w, 0) + COALESCE(b.total_b, 0) AS carbon_kg
+        COALESCE(w.total_w, 0) + COALESCE(b.total_b, 0) AS total_value
       FROM users u
       LEFT JOIN (
-        SELECT user_id, SUM(carbonReduce) AS total_w
+        SELECT user_id, ${selector.walk} AS total_w
         FROM walk_history
-        WHERE record_date >= ?
+        WHERE record_date >= ? AND record_date <= ?
         GROUP BY user_id
       ) w ON w.user_id = u.user_id
       LEFT JOIN (
-        SELECT user_id, SUM(carbonReduce) AS total_b
+        SELECT user_id, ${selector.bike} AS total_b
         FROM bic_history
-        WHERE record_date >= ?
+        WHERE record_date >= ? AND record_date <= ?
         GROUP BY user_id
       ) b ON b.user_id = u.user_id
       WHERE COALESCE(w.total_w, 0) + COALESCE(b.total_b, 0) > 0
-      ORDER BY carbon_kg DESC
+      ORDER BY total_value DESC
       LIMIT ?
     `;
-    const [rows] = await db.query(sql, [sinceStr, sinceStr, limit]);
-    res.json({ items: rows, days, limit, since: sinceStr });
+    const [rows] = await db.query(sql, [startStr, endStr, startStr, endStr, limit]);
+    res.json({ items: rows, limit, start: startStr, end: endStr, metric, unit: selector.label });
   } catch (err) {
     console.error('[leaderboard] error:', err);
     res.status(500).json({ error: 'Failed to load leaderboard' });

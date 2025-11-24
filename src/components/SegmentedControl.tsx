@@ -1,12 +1,12 @@
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ViewStyle } from 'react-native';
 import theme from '../utils/theme';
 
 type Item<T extends string> = { value: T; label: string };
 export default function SegmentedControl<T extends string>({
-  items, value, onChange,
-}: { items: Item<T>[]; value: T; onChange: (v: T) => void }) {
+  items, value, onChange, style,
+}: { items: Item<T>[]; value: T; onChange: (v: T) => void; style?: ViewStyle }) {
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, style]}>
       {items.map(it => {
         const active = it.value === value;
         return (

@@ -117,15 +117,28 @@ export async function fetchReductionTotal(uid: string | number) {
 export type CarbonLeaderboardEntry = {
   user_id: number;
   name: string;
-  carbon_kg: number;
+  value: number;
 };
 
-export async function fetchCarbonLeaderboard(days = 30, limit = 10): Promise<CarbonLeaderboardEntry[]> {
-  const url = api(`/leaderboard/carbon?days=${encodeURIComponent(String(days))}&limit=${encodeURIComponent(String(limit))}`);
+export async function fetchCarbonLeaderboard(params: {
+  start?: string;
+  end?: string;
+  days?: number;
+  limit?: number;
+  metric?: 'carbon' | 'distance';
+}): Promise<CarbonLeaderboardEntry[]> {
+  const search = new URLSearchParams();
+  if (params.days) search.append('days', String(params.days));
+  if (params.limit) search.append('limit', String(params.limit));
+  if (params.start) search.append('start', params.start);
+  if (params.end) search.append('end', params.end);
+  search.append('metric', params.metric || 'carbon');
+
+  const url = api(`/leaderboard/carbon?${search.toString()}`);
   const json = await getJson(url);
   return normalizeListPayload(json).map((it: any) => ({
     user_id: coerceNumber(it.user_id),
     name: it?.name || 'User',
-    carbon_kg: Number(it?.carbon_kg) || 0,
+    value: Number(it?.total_value ?? it?.carbon_kg ?? it?.value) || 0,
   }));
 }

@@ -104,6 +104,7 @@ export default function Dashboard() {
   const [pieLoading, setPieLoading] = useState(false);
   const [leaderboard, setLeaderboard] = useState<CarbonLeaderboardEntry[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [leaderboardMetric, setLeaderboardMetric] = useState<'carbon' | 'distance'>('carbon');
 
   /* ----- recent activities ----- */
   useEffect(() => {
@@ -140,6 +141,9 @@ export default function Dashboard() {
     setCyclingProgress(Math.min((sum('Cycling') / (user.bic_goal || 100)) * 100, 100));
   }, [activities, user]);
 
+  /* ----- compute current window & totals ----- */
+  const { start, end } = useMemo(() => getRange(period, offset), [period, offset]);
+
   /* ----- fetch pie lists once ----- */
   useEffect(() => {
     let cancelled = false;
@@ -168,7 +172,14 @@ export default function Dashboard() {
     (async () => {
       try {
         setLeaderboardLoading(true);
-        const items = await fetchCarbonLeaderboard(30, 10);
+        const startStr = start.toISOString().slice(0, 19).replace('T', ' ');
+        const endStr = end.toISOString().slice(0, 19).replace('T', ' ');
+        const items = await fetchCarbonLeaderboard({
+          start: startStr,
+          end: endStr,
+          limit: 10,
+          metric: leaderboardMetric,
+        });
         if (!cancelled) setLeaderboard(items);
       } catch (err) {
         if (!cancelled) setLeaderboard([]);
@@ -178,10 +189,7 @@ export default function Dashboard() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
-
-  /* ----- compute current window & totals ----- */
-  const { start, end } = useMemo(() => getRange(period, offset), [period, offset]);
+  }, [start, end, leaderboardMetric]);
 
   const { emissionSum, reductionSum, totalPie, emPct, redPct } = useMemo(() => {
     const inRange = (v: any) => {
@@ -368,14 +376,47 @@ export default function Dashboard() {
             <View style={styles.leaderboardHeader}>
               <View>
                 <Text style={styles.sectionTitle}>Carbon Reduction Leaderboard</Text>
-                <Text style={styles.leaderboardSub}>Top users — Walk + Bike combined (last 30 days)</Text>
+                <Text style={styles.leaderboardSub}>Top users — Walk + Bike combined</Text>
               </View>
               {leaderboardLoading && <ActivityIndicator color={theme.primary} />}
             </View>
+
+            <View style={styles.leaderboardControls}>
+              <SegmentedControl
+                items={[
+                  { value: 'week', label: 'Week' },
+                  { value: 'month', label: 'Month' },
+                  { value: 'year', label: 'Year' },
+                ]}
+                value={period}
+                onChange={(p) => { setPeriod(p); setOffset(0); }}
+                style={{ flex: 1 }}
+              />
+              <NavPeriodButtons
+                onPrev={() => setOffset((o) => o - 1)}
+                onThis={() => setOffset(0)}
+                onNext={() => setOffset((o) => o + 1)}
+              />
+            </View>
+
+            <View style={[styles.leaderboardControls, { marginTop: 8 }]}>
+              <SegmentedControl
+                items={[
+                  { value: 'carbon', label: 'Carbon' },
+                  { value: 'distance', label: 'Distance' },
+                ]}
+                value={leaderboardMetric}
+                onChange={(val) => setLeaderboardMetric(val as any)}
+                style={{ flex: 1 }}
+              />
+            </View>
+
             <View style={styles.tableHeader}>
               <Text style={[styles.tableCell, styles.tableRank]}>#</Text>
               <Text style={[styles.tableCell, styles.tableUser]}>User</Text>
-              <Text style={[styles.tableCell, styles.tableValue]}>Carbon (kg)</Text>
+              <Text style={[styles.tableCell, styles.tableValue]}>
+                {leaderboardMetric === 'distance' ? 'Distance (km)' : 'Carbon (kg)'}
+              </Text>
             </View>
             {leaderboard.map((entry, idx) => (
               <View key={`${entry.user_id}-${idx}`} style={styles.tableRow}>
@@ -384,7 +425,7 @@ export default function Dashboard() {
                   {entry.name || `User #${entry.user_id ?? '-'}`}
                 </Text>
                 <Text style={[styles.tableCell, styles.tableValue]}>
-                  {Number(entry.carbon_kg || 0).toFixed(2)}
+                  {Number(entry.value || 0).toFixed(2)}
                 </Text>
               </View>
             ))}
@@ -438,6 +479,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   leaderboardSub: { color: theme.sub, fontSize: 12 },
+  leaderboardControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginTop: 4,
+  },
   tableHeader: {
     flexDirection: 'row',
     alignItems: 'center',
