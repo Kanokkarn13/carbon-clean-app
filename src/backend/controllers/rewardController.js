@@ -67,13 +67,14 @@ const mapRedemptionRow = (row = {}) => ({
 });
 
 async function getPointsSummary(userId, conn = db) {
+  // Some schemas use `user` instead of `user_id`; support both.
   const [[walkRow]] = await conn.query(
-    'SELECT COALESCE(SUM(points),0) AS total FROM walk_history WHERE user_id = ?',
-    [userId],
+    'SELECT COALESCE(SUM(points),0) AS total FROM walk_history WHERE user_id = ? OR `user` = ?',
+    [userId, userId],
   );
   const [[bikeRow]] = await conn.query(
-    'SELECT COALESCE(SUM(points),0) AS total FROM bic_history WHERE user_id = ?',
-    [userId],
+    'SELECT COALESCE(SUM(points),0) AS total FROM bic_history WHERE user_id = ? OR `user` = ?',
+    [userId, userId],
   );
   const [[spentRow]] = await conn.query(
     `
@@ -267,7 +268,7 @@ exports.redeemReward = async function redeemReward(req, res) {
       margin: 1,
     });
 
-    const key = `vouchers/${redemptionId}.png`;
+    const key = `reward_qr/${redemptionId}.png`;
     const { location } = await uploadToS3(qrBuffer, key, 'image/png');
 
     const expiresAt = expiresInBangkok(7);
