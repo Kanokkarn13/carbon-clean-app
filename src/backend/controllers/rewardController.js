@@ -1,6 +1,6 @@
 const QRCode = require('qrcode');
 const db = require('../config/db');
-const { uploadToS3 } = require('../config/s3');
+const { uploadToS3, getSignedUrlForKey } = require('../config/s3');
 const {
   generateUniqueVoucherCode,
   buildQrPayload,
@@ -65,6 +65,33 @@ const mapRedemptionRow = (row = {}) => ({
   reward_cost_points:
     row.reward_cost_points != null ? Number(row.reward_cost_points) : null,
 });
+
+function extractKeyFromUrl(url = '') {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    // expect https://bucket.s3.region.amazonaws.com/<key>
+    const key = u.pathname.replace(/^\/+/, '');
+    return key || null;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureSignedUrl(url) {
+  if (!url || url.includes('X-Amz-Signature') || url.includes('X-Amz-Credential')) {
+    return url;
+  }
+  const key = extractKeyFromUrl(url);
+  if (!key) return url;
+  try {
+    const signed = await getSignedUrlForKey(key, 60 * 60 * 24 * 3); // 3 days
+    return signed;
+  } catch (err) {
+    console.warn('⚠️  Failed to sign QR URL, using original', err?.message || err);
+    return url;
+  }
+}
 
 async function getPointsSummary(userId, conn = db) {
   const [[walkRow]] = await conn.query(
@@ -131,7 +158,13 @@ exports.listRedemptions = async function listRedemptions(req, res) {
       [userId]
     );
 
-    const items = Array.isArray(rows) ? rows.map(mapRedemptionRow) : [];
+    const baseItems = Array.isArray(rows) ? rows.map(mapRedemptionRow) : [];
+    const items = await Promise.all(
+      baseItems.map(async (it) => ({
+        ...it,
+        qr_image_url: await ensureSignedUrl(it.qr_image_url),
+      })),
+    );
     return res.json({ items });
   } catch (error) {
     console.error(
@@ -269,6 +302,7 @@ exports.redeemReward = async function redeemReward(req, res) {
 
     const key = `reward_qr/${redemptionId}.png`;
     const { url: qrUrl } = await uploadToS3(qrBuffer, key, 'image/png');
+    const signedQrUrl = await ensureSignedUrl(qrUrl);
 
     const expiresAt = expiresInBangkok(7);
 
@@ -278,7 +312,7 @@ exports.redeemReward = async function redeemReward(req, res) {
         SET voucher_code = ?, qr_payload = ?, qr_image_url = ?, expires_at = ?, status = 'approved'
         WHERE id = ?
       `.trim(),
-      [voucherCode, qrPayload, qrUrl, expiresAt, redemptionId],
+      [voucherCode, qrPayload, signedQrUrl, expiresAt, redemptionId],
     );
 
     await conn.commit();
@@ -287,7 +321,7 @@ exports.redeemReward = async function redeemReward(req, res) {
       redemption_id: redemptionId,
       voucher_code: voucherCode,
       qr_payload: qrPayload,
-      qr_image_url: qrUrl,
+      qr_image_url: signedQrUrl,
       expires_at: expiresAt,
       status: 'approved',
     });
