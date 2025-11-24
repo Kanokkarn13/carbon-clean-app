@@ -22,6 +22,7 @@ import Svg, { Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 import RecentActivityList from '../components/RecentActivityList';
 import { evaluateActivityPoints, sumActivityPoints } from '../utils/points';
 import { getUser as getStoredUser } from '../services/authService';
+import { fetchPointsBalance } from '../services/rewardService';
 
 type HomeNav = NativeStackNavigationProp<RootStackParamList, any>;
 
@@ -544,6 +545,31 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
 
+  useEffect(() => {
+    const uidVal = user?.user_id ?? (user as any)?.id;
+    if (!uidVal) {
+      setDbPoints(null);
+      return;
+    }
+    let mounted = true;
+    const loadDbPoints = async () => {
+      setDbPointsLoading(true);
+      try {
+        const resp = await fetchPointsBalance(uidVal);
+        if (mounted) setDbPoints(resp.available);
+      } catch (err) {
+        console.warn('⚠️ Failed to fetch DB points', err);
+        if (mounted) setDbPoints(null);
+      } finally {
+        if (mounted) setDbPointsLoading(false);
+      }
+    };
+    loadDbPoints();
+    return () => {
+      mounted = false;
+    };
+  }, [user]);
+
   const walkingGoal = useMemo(
     () =>
       toGoalNumber(
@@ -575,7 +601,13 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const progressDistance = progressType === 'Walking' ? walkingDistance : cyclingDistance;
   const progressGoal = progressType === 'Walking' ? walkingGoal : cyclingGoal;
 
-  const totalRecentPoints = useMemo(() => sumActivityPoints(activities), [activities]);
+  const [dbPoints, setDbPoints] = useState<number | null>(null);
+  const [dbPointsLoading, setDbPointsLoading] = useState(false);
+
+  const totalRecentPoints = useMemo(() => {
+    if (dbPoints !== null && dbPoints !== undefined) return dbPoints;
+    return sumActivityPoints(activities);
+  }, [activities, dbPoints]);
 
   const pointsBadgeLabel = `${totalRecentPoints.toLocaleString()} P`;
 

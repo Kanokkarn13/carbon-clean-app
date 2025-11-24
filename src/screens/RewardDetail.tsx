@@ -17,7 +17,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import theme from '../utils/theme';
 import type { RootStackParamList, User } from './HomeStack';
 import type { RedeemResponse, Reward } from '../services/rewardService';
-import { redeemReward } from '../services/rewardService';
+import { redeemReward, fetchPointsBalance } from '../services/rewardService';
 
 type RewardDetailRouteParams = {
   reward: Reward & {
@@ -40,6 +40,8 @@ export default function RewardDetail() {
   const [redeeming, setRedeeming] = useState(false);
   const [redeemError, setRedeemError] = useState<string | null>(null);
   const [voucher, setVoucher] = useState<RedeemResponse | null>(null);
+  const [balance, setBalance] = useState<number | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
 
   const userId = useMemo(() => {
     const raw = (params.user as any)?.user_id ?? (params.user as any)?.id;
@@ -47,10 +49,30 @@ export default function RewardDetail() {
     return Number.isFinite(n) ? n : null;
   }, [params.user]);
 
-  const availablePoints = useMemo(
-    () => Math.max(0, Math.round(params?.totalPoints ?? 0)),
-    [params?.totalPoints]
-  );
+  const availablePoints = useMemo(() => {
+    if (typeof balance === 'number') return Math.max(0, Math.round(balance));
+    return Math.max(0, Math.round(params?.totalPoints ?? 0));
+  }, [balance, params?.totalPoints]);
+
+  React.useEffect(() => {
+    if (!userId) return;
+    let mounted = true;
+    const load = async () => {
+      setBalanceLoading(true);
+      try {
+        const resp = await fetchPointsBalance(userId);
+        if (mounted) setBalance(resp.available);
+      } catch (err) {
+        console.warn('⚠️ Failed to fetch balance', err);
+      } finally {
+        if (mounted) setBalanceLoading(false);
+      }
+    };
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, [userId]);
 
   const pointsLabel = `${(reward?.cost_points ?? 0).toLocaleString()} P`;
   const highlight = reward?.highlightColor ?? 'rgba(16, 185, 129, 0.12)';
@@ -67,9 +89,8 @@ export default function RewardDetail() {
 
   const canRedeem = useMemo(() => {
     if (!userId || !reward?.id) return false;
-    if (params?.totalPoints == null) return true; // allow redeem if balance not provided
     return availablePoints >= (reward?.cost_points ?? 0);
-  }, [availablePoints, params?.totalPoints, reward?.cost_points, reward?.id, userId]);
+  }, [availablePoints, reward?.cost_points, reward?.id, userId]);
 
   const onRedeem = useCallback(async () => {
     if (!reward?.id) return;

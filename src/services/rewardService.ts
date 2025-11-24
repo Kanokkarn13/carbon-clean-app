@@ -49,6 +49,12 @@ export type RedeemResponse = {
   status?: RedemptionStatus;
 };
 
+export type PointsBalance = {
+  earned: number;
+  spent: number;
+  available: number;
+};
+
 export async function fetchRewards(): Promise<Reward[]> {
   const endpoint = api('/rewards');
   const response = await fetch(endpoint);
@@ -144,4 +150,21 @@ export async function validateVoucher(
     throw new Error(text || `Failed to validate voucher (${response.status})`);
   }
   return (await response.json()) as { redemption_id: number; status: RedemptionStatus; used_at?: string };
+}
+
+export async function fetchPointsBalance(
+  userId: number | string
+): Promise<PointsBalance> {
+  const endpoint = api(`/rewards/points/${encodeURIComponent(String(userId))}`);
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Failed to load points balance (${response.status})`);
+  }
+  const data = (await response.json()) as Partial<PointsBalance>;
+  return {
+    earned: Number(data.earned) || 0,
+    spent: Number(data.spent) || 0,
+    available: Number(data.available) || 0,
+  };
 }

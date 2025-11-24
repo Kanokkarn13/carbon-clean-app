@@ -17,6 +17,7 @@ import {
   fetchRedemptions,
   Redemption,
   RedemptionStatus,
+  fetchPointsBalance,
 } from '../services/rewardService';
 import type { RootStackParamList, User } from './HomeStack';
 
@@ -84,17 +85,37 @@ const RedeemHistoryScreen: React.FC<Props> = ({ route, navigation }) => {
 
   const totalPoints = useMemo(() => Math.max(0, Math.round(params.totalPoints ?? 0)), [params.totalPoints]);
 
-  const pointsLabel = `${totalPoints.toLocaleString()} P`;
-
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [items, setItems] = useState<Redemption[]>([]);
+  const [dbPoints, setDbPoints] = useState<number | null>(null);
 
   const totalRedeemed = useMemo(
     () => items.reduce((sum, item) => sum + (item.cost_points || 0), 0),
     [items]
   );
+
+  useEffect(() => {
+    const uid = userId;
+    if (!uid) return;
+    let mounted = true;
+    const loadPoints = async () => {
+      try {
+        const resp = await fetchPointsBalance(uid);
+        if (mounted) setDbPoints(resp.available);
+      } catch (err) {
+        console.warn('⚠️ Failed to fetch points balance', err);
+      }
+    };
+    loadPoints();
+    return () => {
+      mounted = false;
+    };
+  }, [userId]);
+
+  const availablePoints = dbPoints != null ? dbPoints : totalPoints;
+  const pointsLabel = `${availablePoints.toLocaleString()} P`;
 
   const loadHistory = useCallback(async () => {
     if (!userId) {

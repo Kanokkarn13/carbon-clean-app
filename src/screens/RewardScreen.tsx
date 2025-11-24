@@ -17,7 +17,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import theme from '../utils/theme';
 import { sumActivityPoints, ActivityPointSource } from '../utils/points';
-import { fetchRewards, Reward } from '../services/rewardService';
+import { fetchRewards, Reward, fetchPointsBalance } from '../services/rewardService';
 import { fetchUserById, getUser as getStoredUser, saveUser } from '../services/authService';
 import type { RootStackParamList, User } from './HomeStack';
 
@@ -68,7 +68,13 @@ export default function RewardScreen() {
   const totalPointsParam =
     typeof params.totalPoints === 'number' ? params.totalPoints : undefined;
 
+  const dbPoints =
+    typeof (user as any)?.totalPoints === 'number'
+      ? Math.max(0, Math.round((user as any)?.totalPoints))
+      : undefined;
+
   const totalPoints = useMemo(() => {
+    if (typeof dbPoints === 'number') return dbPoints;
     if (Array.isArray(activities) && activities.length) {
       try {
         return Math.max(0, Math.round(sumActivityPoints(activities as any)));
@@ -77,7 +83,7 @@ export default function RewardScreen() {
       }
     }
     return totalPointsParam != null ? Math.max(0, Math.round(totalPointsParam)) : 0;
-  }, [activities, totalPointsParam]);
+  }, [activities, dbPoints, totalPointsParam]);
 
   const pointsLabel = `${totalPoints.toLocaleString()} P`;
   const [query, setQuery] = useState('');
@@ -111,6 +117,26 @@ export default function RewardScreen() {
       mounted = false;
     };
   }, [params.user]);
+
+  useEffect(() => {
+    const uid = user?.user_id ?? (user as any)?.id;
+    if (!uid) return;
+    let mounted = true;
+    const loadPoints = async () => {
+      try {
+        const resp = await fetchPointsBalance(uid);
+        if (mounted) {
+          setUser((prev) => ({ ...(prev || {}), totalPoints: resp.available } as any));
+        }
+      } catch (err) {
+        console.warn('⚠️ Failed to fetch points balance', err);
+      }
+    };
+    loadPoints();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.user_id]);
 
   const userName = useMemo(() => {
     const fname = user?.fname ?? '';
