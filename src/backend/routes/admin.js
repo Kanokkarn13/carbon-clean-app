@@ -463,7 +463,8 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
     if (type === 'walk') {
       dataSql = `
         SELECT w.id, w.user_id, 'walk' AS type,
-               w.distance_km, w.carbonReduce,
+               w.distance_km, w.carbonReduce, w.duration_sec, w.step_total,
+               w.title, w.description,
                (CASE WHEN w.duration_sec>0 AND w.distance_km IS NOT NULL
                      THEN (w.distance_km/(w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
                w.record_date
@@ -478,7 +479,8 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
     } else if (type === 'bike' || type === 'bic' || type === 'bicycle') {
       dataSql = `
         SELECT b.id, b.user_id, 'bike' AS type,
-               b.distance_km, b.carbonReduce,
+               b.distance_km, b.carbonReduce, b.duration_sec, NULL AS step_total,
+               b.title, b.description,
                (CASE WHEN b.duration_sec>0 AND b.distance_km IS NOT NULL
                      THEN (b.distance_km/(b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
                b.record_date
@@ -495,7 +497,8 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
       dataSql = `
         SELECT * FROM (
           SELECT w.id, w.user_id, 'walk' AS type,
-                 w.distance_km, w.carbonReduce,
+                 w.distance_km, w.carbonReduce, w.duration_sec, w.step_total,
+                 w.title, w.description,
                  (CASE WHEN w.duration_sec>0 AND w.distance_km IS NOT NULL
                        THEN (w.distance_km/(w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
                  w.record_date
@@ -503,7 +506,8 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
           WHERE w.user_id = ?
           UNION ALL
           SELECT b.id, b.user_id, 'bike' AS type,
-                 b.distance_km, b.carbonReduce,
+                 b.distance_km, b.carbonReduce, b.duration_sec, NULL AS step_total,
+                 b.title, b.description,
                  (CASE WHEN b.duration_sec>0 AND b.distance_km IS NOT NULL
                        THEN (b.distance_km/(b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
                  b.record_date
@@ -527,25 +531,39 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
     const [rows] = await db.query(dataSql, params);
     const [[cntRow]] = await db.query(countSql, countParams);
 
+    const total = Number(cntRow?.cnt || 0);
+
     const data = rows.map(r => ({
       id: r.id,
       user_id: r.user_id,
       type: r.type,
-      distance_km: Number(r.distance_km || 0),
-      carbon: Number(r.carbonReduce || 0),
+      distance_km: r.distance_km == null ? null : Number(r.distance_km),
+      carbonReduce: r.carbonReduce == null ? null : Number(r.carbonReduce),
+      duration_sec: r.duration_sec == null ? null : Number(r.duration_sec),
+      step_total: r.step_total == null ? null : Number(r.step_total),
+      title: r.title || null,
+      description: r.description || null,
       pace_kmh: r.pace_kmh == null ? null : Number(r.pace_kmh),
       record_date: r.record_date
     }));
 
+    const meta = {
+      user_id: userId,
+      type,
+      limit,
+      offset,
+      total
+    };
+
     res.json({
       success: true,
       data,
-      meta: {
-        user_id: userId,
-        type,
+      meta,
+      // ✅ เพิ่ม pagination ให้ FE ใช้งานได้ตรง ๆ
+      pagination: {
+        total,
         limit,
-        offset,
-        total: Number(cntRow?.cnt || 0)
+        offset
       }
     });
   } catch (err) {
@@ -652,7 +670,7 @@ router.post('/rewards/upload', verifyToken, verifyAdmin, upload.single('file'), 
     if (!file) return res.status(400).json({ message: 'file is required' });
     const ext = path.extname(file.originalname || '').toLowerCase() || '.bin';
     const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-    theKey = `reward/${filename}`;
+    const theKey = `reward/${filename}`;
     await uploadBufferToS3({ buffer: file.buffer, contentType: file.mimetype, key: theKey });
     const publicUrl = makePublicFileUrl(req, theKey, 'rewards');
     return res.json({ success: true, url: publicUrl, key: theKey });
