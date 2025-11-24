@@ -67,14 +67,13 @@ const mapRedemptionRow = (row = {}) => ({
 });
 
 async function getPointsSummary(userId, conn = db) {
-  // Some schemas use `user` instead of `user_id`; support both.
   const [[walkRow]] = await conn.query(
-    'SELECT COALESCE(SUM(points),0) AS total FROM walk_history WHERE user_id = ? OR `user` = ?',
-    [userId, userId],
+    'SELECT COALESCE(SUM(points),0) AS total FROM walk_history WHERE user_id = ?',
+    [userId],
   );
   const [[bikeRow]] = await conn.query(
-    'SELECT COALESCE(SUM(points),0) AS total FROM bic_history WHERE user_id = ? OR `user` = ?',
-    [userId, userId],
+    'SELECT COALESCE(SUM(points),0) AS total FROM bic_history WHERE user_id = ?',
+    [userId],
   );
   const [[spentRow]] = await conn.query(
     `
