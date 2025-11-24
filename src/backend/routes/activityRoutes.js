@@ -278,4 +278,44 @@ router.delete('/cycling/:id', async (req, res) => {
   }
 });
 
+/* ---------------- leaderboard: carbon reduction (walk + bike) ---------------- */
+router.get('/leaderboard/carbon', async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(Number(req.query.days || 30), 365));
+    const limit = Math.max(1, Math.min(Number(req.query.limit || 10), 50));
+
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    const sinceStr = since.toISOString().slice(0, 19).replace('T', ' ');
+
+    const sql = `
+      SELECT
+        u.user_id,
+        TRIM(CONCAT(COALESCE(u.fname, ''), ' ', COALESCE(u.lname, ''))) AS name,
+        COALESCE(w.total_w, 0) + COALESCE(b.total_b, 0) AS carbon_kg
+      FROM users u
+      LEFT JOIN (
+        SELECT user_id, SUM(carbonReduce) AS total_w
+        FROM walk_history
+        WHERE record_date >= ?
+        GROUP BY user_id
+      ) w ON w.user_id = u.user_id
+      LEFT JOIN (
+        SELECT user_id, SUM(carbonReduce) AS total_b
+        FROM bic_history
+        WHERE record_date >= ?
+        GROUP BY user_id
+      ) b ON b.user_id = u.user_id
+      WHERE COALESCE(w.total_w, 0) + COALESCE(b.total_b, 0) > 0
+      ORDER BY carbon_kg DESC
+      LIMIT ?
+    `;
+    const [rows] = await db.query(sql, [sinceStr, sinceStr, limit]);
+    res.json({ items: rows, days, limit, since: sinceStr });
+  } catch (err) {
+    console.error('[leaderboard] error:', err);
+    res.status(500).json({ error: 'Failed to load leaderboard' });
+  }
+});
+
 module.exports = router;

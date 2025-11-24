@@ -214,9 +214,15 @@ const RedeemHistoryDetailScreen: React.FC<Props> = ({ route, navigation }) => {
             <Text style={styles.voucherCode}>{redemption.voucher_code}</Text>
           )}
           {redemption.qr_image_url ? (
-            <Image source={{ uri: redemption.qr_image_url }} style={styles.voucherQr} />
+            <View style={styles.voucherQrWrap}>
+              <Image
+                source={{ uri: redemption.qr_image_url }}
+                style={styles.voucherQr}
+                resizeMode="contain"
+              />
+            </View>
           ) : (
-            <View style={[styles.voucherQr, styles.heroFallback]}>
+            <View style={[styles.voucherQrWrap, styles.heroFallback]}>
               <Ionicons name="qr-code-outline" size={32} color={theme.primaryDark} />
             </View>
           )}
@@ -385,13 +391,20 @@ const styles = StyleSheet.create({
     color: theme.primaryDark,
     textAlign: 'center',
   },
-  voucherQr: {
+  voucherQrWrap: {
     width: '100%',
-    height: 220,
+    aspectRatio: 1,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.border,
     backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  voucherQr: {
+    width: '90%',
+    height: '90%',
   },
   voucherMetaRow: {
     flexDirection: 'row',

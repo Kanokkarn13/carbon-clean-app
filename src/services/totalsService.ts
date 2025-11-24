@@ -113,3 +113,19 @@ export async function fetchReductionTotal(uid: string | number) {
   const items = await fetchReductionItems(uid);
   return items.reduce((s, it) => s + coerceNumber(it.point_value), 0);
 }
+
+export type CarbonLeaderboardEntry = {
+  user_id: number;
+  name: string;
+  carbon_kg: number;
+};
+
+export async function fetchCarbonLeaderboard(days = 30, limit = 10): Promise<CarbonLeaderboardEntry[]> {
+  const url = api(`/leaderboard/carbon?days=${encodeURIComponent(String(days))}&limit=${encodeURIComponent(String(limit))}`);
+  const json = await getJson(url);
+  return normalizeListPayload(json).map((it: any) => ({
+    user_id: coerceNumber(it.user_id),
+    name: it?.name || 'User',
+    carbon_kg: Number(it?.carbon_kg) || 0,
+  }));
+}

@@ -18,7 +18,7 @@ import theme from '../utils/theme';
 import { baseLineChartConfig } from '../utils/chartConfig';
 import { useDashboardSeries, Period } from '../hooks/useDashboardSeries';
 import { fetchRecentActivities } from '../services/activityService';
-import { fetchEmissionItems, fetchReductionItems } from '../services/totalsService';
+import { fetchEmissionItems, fetchReductionItems, fetchCarbonLeaderboard, CarbonLeaderboardEntry } from '../services/totalsService';
 // ❌ ลบ safeDate ออก เพื่อกันการบวก +7 อัตโนมัติ
 // import { safeDate } from '../utils/date';
 import ProgressStat from '../components/ProgressStat';
@@ -102,6 +102,8 @@ export default function Dashboard() {
   const [emissionItems, setEmissionItems] = useState<{ point_value: number; record_date: any }[]>([]);
   const [reductionItems, setReductionItems] = useState<{ point_value: number; record_date: any }[]>([]);
   const [pieLoading, setPieLoading] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<CarbonLeaderboardEntry[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
   /* ----- recent activities ----- */
   useEffect(() => {
@@ -159,6 +161,24 @@ export default function Dashboard() {
     })();
     return () => { cancelled = true; };
   }, [user]);
+
+  /* ----- fetch leaderboard ----- */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLeaderboardLoading(true);
+        const items = await fetchCarbonLeaderboard(30, 10);
+        if (!cancelled) setLeaderboard(items);
+      } catch (err) {
+        if (!cancelled) setLeaderboard([]);
+        console.warn('⚠️ Failed to load leaderboard', err);
+      } finally {
+        if (!cancelled) setLeaderboardLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   /* ----- compute current window & totals ----- */
   const { start, end } = useMemo(() => getRange(period, offset), [period, offset]);
@@ -342,6 +362,39 @@ export default function Dashboard() {
               </View>
             )}
           </View>
+
+          {/* ---- Carbon reduction leaderboard ---- */}
+          <View style={styles.card}>
+            <View style={styles.leaderboardHeader}>
+              <View>
+                <Text style={styles.sectionTitle}>Carbon Reduction Leaderboard</Text>
+                <Text style={styles.leaderboardSub}>Top users — Walk + Bike combined (last 30 days)</Text>
+              </View>
+              {leaderboardLoading && <ActivityIndicator color={theme.primary} />}
+            </View>
+            <View style={styles.tableHeader}>
+              <Text style={[styles.tableCell, styles.tableRank]}>#</Text>
+              <Text style={[styles.tableCell, styles.tableUser]}>User</Text>
+              <Text style={[styles.tableCell, styles.tableValue]}>Carbon (kg)</Text>
+            </View>
+            {leaderboard.map((entry, idx) => (
+              <View key={`${entry.user_id}-${idx}`} style={styles.tableRow}>
+                <Text style={[styles.tableCell, styles.tableRank]}>{idx + 1}</Text>
+                <Text style={[styles.tableCell, styles.tableUser]} numberOfLines={1}>
+                  {entry.name || `User #${entry.user_id ?? '-'}`}
+                </Text>
+                <Text style={[styles.tableCell, styles.tableValue]}>
+                  {Number(entry.carbon_kg || 0).toFixed(2)}
+                </Text>
+              </View>
+            ))}
+            {(!leaderboard || leaderboard.length === 0) && !leaderboardLoading && (
+              <View style={styles.emptyLeaderboard}>
+                <Ionicons name="leaf-outline" size={18} color={theme.sub} />
+                <Text style={styles.emptyLeaderboardText}>No carbon reduction data yet.</Text>
+              </View>
+            )}
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -377,6 +430,39 @@ const styles = StyleSheet.create({
   chart: { alignSelf: 'stretch' },
 
   progressRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
+
+  leaderboardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  leaderboardSub: { color: theme.sub, fontSize: 12 },
+  tableHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.border,
+    backgroundColor: '#F8FAFC',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.border,
+  },
+  tableCell: { color: theme.text },
+  tableRank: { width: 32, textAlign: 'center', fontWeight: '700' },
+  tableUser: { flex: 1, paddingHorizontal: 8, fontWeight: '700' },
+  tableValue: { width: 100, textAlign: 'right', fontWeight: '700', color: theme.primaryDark },
+  emptyLeaderboard: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyLeaderboardText: { color: theme.sub, marginTop: 6 },
 
   kvRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 },
   kvLabel: { color: theme.sub, fontSize: 14 },
