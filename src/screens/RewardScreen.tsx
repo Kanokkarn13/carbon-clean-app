@@ -249,7 +249,7 @@ export default function RewardScreen() {
                 navigation.navigate('RewardDetail', {
                   reward: item,
                   totalPoints,
-                  user: params.user,
+                  user,
                 })
               }
             >

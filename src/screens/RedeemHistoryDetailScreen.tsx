@@ -1,11 +1,11 @@
-import React, { useMemo } from 'react';
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 
 import type { RootStackParamList } from './HomeStack';
-import { Redemption, RedemptionStatus } from '../services/rewardService';
+import { Redemption, RedemptionStatus, validateVoucher } from '../services/rewardService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'RedeemHistoryDetail'>;
 
@@ -35,6 +35,18 @@ const STATUS_META: Record<
     tint: '#FEF3C7',
     color: '#B45309',
     icon: 'time',
+  },
+  used: {
+    label: 'Used',
+    tint: '#DBEAFE',
+    color: '#1D4ED8',
+    icon: 'checkmark-done',
+  },
+  expired: {
+    label: 'Expired',
+    tint: '#F3F4F6',
+    color: '#6B7280',
+    icon: 'alert-circle',
   },
   rejected: {
     label: 'Rejected',
@@ -82,11 +94,35 @@ const RedeemHistoryDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     );
   }
 
-  const meta = STATUS_META[redemption.status] ?? STATUS_META.pending;
+  const [validating, setValidating] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [statusOverride, setStatusOverride] = useState<RedemptionStatus | null>(null);
+  const [validatedAt, setValidatedAt] = useState<string | null>(redemption.used_at ?? null);
+
+  const effectiveStatus = statusOverride ?? redemption.status;
+  const meta = STATUS_META[effectiveStatus] ?? STATUS_META.pending;
 
   const rewardTitle = redemption.reward_title || `Reward #${redemption.reward_id ?? '-'}`;
   const rewardDescription =
     redemption.reward_description || 'No description available for this reward.';
+
+  const onValidate = useCallback(async () => {
+    if (!redemption.voucher_code) {
+      setValidationError('Voucher code is missing.');
+      return;
+    }
+    setValidating(true);
+    setValidationError(null);
+    try {
+      const resp = await validateVoucher(redemption.voucher_code);
+      setStatusOverride(resp.status);
+      setValidatedAt(resp.used_at ?? new Date().toISOString());
+    } catch (err: any) {
+      setValidationError(err?.message || 'Failed to validate voucher.');
+    } finally {
+      setValidating(false);
+    }
+  }, [redemption.voucher_code]);
 
   const summaryStats = useMemo(
     () => [
@@ -111,6 +147,9 @@ const RedeemHistoryDetailScreen: React.FC<Props> = ({ route, navigation }) => {
     ],
     [redemption]
   );
+
+  const expiresText = redemption.expires_at ? formatDate(redemption.expires_at) : 'No expiry';
+  const usedText = validatedAt ? formatDate(validatedAt) : null;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -163,6 +202,54 @@ const RedeemHistoryDetailScreen: React.FC<Props> = ({ route, navigation }) => {
           )}
         </View>
 
+        <View style={styles.voucherCard}>
+          <View style={styles.voucherHeader}>
+            <Text style={styles.sectionTitle}>Voucher</Text>
+            <View style={[styles.statusBadge, { backgroundColor: meta.tint }]}>
+              <Ionicons name="qr-code-outline" size={16} color={meta.color} style={{ marginRight: 6 }} />
+              <Text style={[styles.statusBadgeText, { color: meta.color }]}>{meta.label}</Text>
+            </View>
+          </View>
+          {redemption.voucher_code && (
+            <Text style={styles.voucherCode}>{redemption.voucher_code}</Text>
+          )}
+          {redemption.qr_image_url ? (
+            <Image source={{ uri: redemption.qr_image_url }} style={styles.voucherQr} />
+          ) : (
+            <View style={[styles.voucherQr, styles.heroFallback]}>
+              <Ionicons name="qr-code-outline" size={32} color={theme.primaryDark} />
+            </View>
+          )}
+          <View style={styles.voucherMetaRow}>
+            <Ionicons name="calendar-outline" size={16} color={theme.sub} style={{ marginRight: 6 }} />
+            <Text style={styles.voucherMetaText}>Expires {expiresText}</Text>
+          </View>
+          <View style={styles.voucherMetaRow}>
+            <Ionicons name="time-outline" size={16} color={theme.sub} style={{ marginRight: 6 }} />
+            <Text style={styles.voucherMetaText}>
+              {usedText ? `Used ${usedText}` : 'Not used yet'}
+            </Text>
+          </View>
+          {validationError && <Text style={[styles.voucherMetaText, { color: theme.danger }]}>{validationError}</Text>}
+          {effectiveStatus === 'approved' && (
+            <TouchableOpacity
+              style={styles.validateBtn}
+              onPress={onValidate}
+              disabled={validating}
+              activeOpacity={0.85}
+            >
+              {validating ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-done" size={16} color="#fff" style={{ marginRight: 6 }} />
+                  <Text style={styles.validateBtnText}>Mark as used</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+
         <View style={styles.summaryStrip}>
           {summaryStats.map((stat) => (
             <View key={stat.label} style={styles.summaryItem}>
@@ -181,6 +268,10 @@ const RedeemHistoryDetailScreen: React.FC<Props> = ({ route, navigation }) => {
             {renderInfoRow('Redemption ID', redemption.id ?? '-')}
             {renderInfoRow('Reward ID', redemption.reward_id ?? '-')}
             {renderInfoRow('Status', meta.label)}
+            {renderInfoRow('Voucher Code', redemption.voucher_code ?? '—')}
+            {renderInfoRow('QR Payload', redemption.qr_payload ?? '—')}
+            {renderInfoRow('Expires', expiresText)}
+            {renderInfoRow('Used At', usedText || '—')}
             {renderInfoRow('Points Used', `${redemption.cost_points.toLocaleString()} pts`)}
             {renderInfoRow(
               'Reward Value',
@@ -267,6 +358,56 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   statusBadgeText: { fontWeight: '700', fontSize: 12 },
+  voucherCard: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: theme.border,
+    padding: 16,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 2,
+  },
+  voucherHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  voucherCode: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 2,
+    color: theme.primaryDark,
+    textAlign: 'center',
+  },
+  voucherQr: {
+    width: '100%',
+    height: 220,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    backgroundColor: '#F8FAFC',
+  },
+  voucherMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  voucherMetaText: { color: theme.sub, fontSize: 13 },
+  validateBtn: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.primaryDark,
+    borderRadius: 12,
+    paddingVertical: 10,
+  },
+  validateBtnText: { color: '#fff', fontWeight: '700' },
   summaryStrip: {
     marginHorizontal: 20,
     marginTop: 16,

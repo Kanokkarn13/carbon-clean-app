@@ -15,7 +15,13 @@ type RewardResponse = {
   items?: Reward[];
 };
 
-export type RedemptionStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+export type RedemptionStatus =
+  | 'pending'
+  | 'approved'
+  | 'used'
+  | 'expired'
+  | 'rejected'
+  | 'cancelled';
 
 export type Redemption = {
   id: number;
@@ -23,10 +29,24 @@ export type Redemption = {
   cost_points: number;
   status: RedemptionStatus;
   created_at: string;
+  voucher_code: string | null;
+  qr_payload: string | null;
+  qr_image_url: string | null;
+  expires_at: string | null;
+  used_at: string | null;
   reward_title: string;
   reward_description: string;
   reward_image_url: string | null;
   reward_cost_points: number | null;
+};
+
+export type RedeemResponse = {
+  redemption_id: number;
+  voucher_code: string;
+  qr_payload: string;
+  qr_image_url: string;
+  expires_at: string;
+  status?: RedemptionStatus;
 };
 
 export async function fetchRewards(): Promise<Reward[]> {
@@ -55,6 +75,24 @@ type RedemptionResponse = {
   items?: Redemption[];
 };
 
+export async function redeemReward(payload: {
+  user_id: number | string;
+  reward_id: number | string;
+  cost_points?: number;
+}): Promise<RedeemResponse> {
+  const endpoint = api('/rewards/redeem');
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Failed to redeem reward (${response.status})`);
+  }
+  return (await response.json()) as RedeemResponse;
+}
+
 export async function fetchRedemptions(
   userId: number | string | null | undefined
 ): Promise<Redemption[]> {
@@ -77,6 +115,11 @@ export async function fetchRedemptions(
     cost_points: Number(item?.cost_points) || 0,
     status: (item?.status as RedemptionStatus) || 'pending',
     created_at: item?.created_at || '',
+    voucher_code: item?.voucher_code ?? null,
+    qr_payload: item?.qr_payload ?? null,
+    qr_image_url: item?.qr_image_url ?? null,
+    expires_at: item?.expires_at ?? null,
+    used_at: item?.used_at ?? null,
     reward_title: item?.reward_title ?? '',
     reward_description: item?.reward_description ?? '',
     reward_image_url: item?.reward_image_url ?? null,
@@ -85,4 +128,20 @@ export async function fetchRedemptions(
         ? null
         : Number(item.reward_cost_points),
   }));
+}
+
+export async function validateVoucher(
+  voucher_code: string
+): Promise<{ redemption_id: number; status: RedemptionStatus; used_at?: string }> {
+  const endpoint = api('/rewards/validate-voucher');
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ voucher_code }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Failed to validate voucher (${response.status})`);
+  }
+  return (await response.json()) as { redemption_id: number; status: RedemptionStatus; used_at?: string };
 }

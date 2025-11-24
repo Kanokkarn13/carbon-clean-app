@@ -1,6 +1,7 @@
 // src/backend/config/s3.js
 require('dotenv').config();
-const AWS = require('aws-sdk');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const {
   AWS_ACCESS_KEY_ID,
@@ -16,32 +17,33 @@ if (!AWS_ACCESS_KEY_ID || !AWS_SECRET_ACCESS_KEY || !bucketName) {
   console.warn('⚠️  AWS S3 env vars are missing. Upload will fail without credentials.');
 }
 
-AWS.config.update({
-  accessKeyId: AWS_ACCESS_KEY_ID,
-  secretAccessKey: AWS_SECRET_ACCESS_KEY,
+const s3 = new S3Client({
   region: AWS_REGION,
+  credentials: {
+    accessKeyId: AWS_ACCESS_KEY_ID || '',
+    secretAccessKey: AWS_SECRET_ACCESS_KEY || '',
+  },
 });
 
-const s3 = new AWS.S3();
-
 /**
- * Upload a buffer to S3 and return the object URL.
- * Note: We avoid ACLs because many buckets enforce bucket-owner policies.
+ * Upload a buffer to S3 and return the object URL (public URL style).
+ * If your bucket is private, you may still use the signed URL helper below.
  */
 async function uploadToS3(buffer, key, contentType = 'application/octet-stream') {
   if (!bucketName) {
-    throw new Error('S3 bucket is not configured (missing S3_BUCKET)');
+    throw new Error('S3 bucket is not configured (missing S3_BUCKET/S3_BUCKET_NAME)');
   }
 
-  const params = {
+  const command = new PutObjectCommand({
     Bucket: bucketName,
     Key: key,
     Body: buffer,
     ContentType: contentType,
-  };
+  });
+  await s3.send(command);
 
-  const result = await s3.upload(params).promise();
-  return { location: result.Location, key: result.Key };
+  const location = `https://${bucketName}.s3.${AWS_REGION}.amazonaws.com/${key}`;
+  return { location, key };
 }
 
 /**
@@ -52,22 +54,17 @@ async function uploadToS3(buffer, key, contentType = 'application/octet-stream')
  */
 async function getSignedUrlForKey(key, expiresSeconds = 60 * 60 * 24 * 7) {
   if (!bucketName) {
-    throw new Error('S3 bucket is not configured (missing S3_BUCKET)');
+    throw new Error('S3 bucket is not configured (missing S3_BUCKET/S3_BUCKET_NAME)');
   }
-  const params = {
+  const command = new GetObjectCommand({
     Bucket: bucketName,
     Key: key,
-    Expires: expiresSeconds,
-  };
-  return new Promise((resolve, reject) => {
-    s3.getSignedUrl('getObject', params, (err, url) => {
-      if (err || !url) return reject(err || new Error('Failed to sign URL'));
-      resolve(url);
-    });
   });
+  return getSignedUrl(s3, command, { expiresIn: expiresSeconds });
 }
 
 module.exports = {
+  s3,
   uploadToS3,
   getSignedUrlForKey,
 };

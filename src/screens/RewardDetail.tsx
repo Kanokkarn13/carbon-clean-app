@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -15,7 +16,8 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import theme from '../utils/theme';
 import type { RootStackParamList, User } from './HomeStack';
-import type { Reward } from '../services/rewardService';
+import type { RedeemResponse, Reward } from '../services/rewardService';
+import { redeemReward } from '../services/rewardService';
 
 type RewardDetailRouteParams = {
   reward: Reward & {
@@ -35,6 +37,20 @@ export default function RewardDetail() {
   const route = useRoute<any>();
   const params = (route.params ?? {}) as RewardDetailRouteParams;
   const { reward } = params;
+  const [redeeming, setRedeeming] = useState(false);
+  const [redeemError, setRedeemError] = useState<string | null>(null);
+  const [voucher, setVoucher] = useState<RedeemResponse | null>(null);
+
+  const userId = useMemo(() => {
+    const raw = (params.user as any)?.user_id ?? (params.user as any)?.id;
+    const n = raw != null ? Number(raw) : NaN;
+    return Number.isFinite(n) ? n : null;
+  }, [params.user]);
+
+  const availablePoints = useMemo(
+    () => Math.max(0, Math.round(params?.totalPoints ?? 0)),
+    [params?.totalPoints]
+  );
 
   const pointsLabel = `${(reward?.cost_points ?? 0).toLocaleString()} P`;
   const highlight = reward?.highlightColor ?? 'rgba(16, 185, 129, 0.12)';
@@ -48,6 +64,34 @@ export default function RewardDetail() {
   const stockText =
     reward?.stock === null || reward?.stock === undefined ? 'Unlimited' : String(reward.stock);
   const description = reward?.description || 'No description provided.';
+
+  const canRedeem = useMemo(() => {
+    if (!userId || !reward?.id) return false;
+    if (params?.totalPoints == null) return true; // allow redeem if balance not provided
+    return availablePoints >= (reward?.cost_points ?? 0);
+  }, [availablePoints, params?.totalPoints, reward?.cost_points, reward?.id, userId]);
+
+  const onRedeem = useCallback(async () => {
+    if (!reward?.id) return;
+    if (!userId) {
+      setRedeemError('Please sign in again to redeem this reward.');
+      return;
+    }
+    setRedeeming(true);
+    setRedeemError(null);
+    try {
+      const result = await redeemReward({
+        user_id: userId,
+        reward_id: reward.id,
+        cost_points: reward.cost_points,
+      });
+      setVoucher(result);
+    } catch (err: any) {
+      setRedeemError(err?.message || 'Failed to redeem this reward.');
+    } finally {
+      setRedeeming(false);
+    }
+  }, [reward?.cost_points, reward?.id, userId]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -94,15 +138,62 @@ export default function RewardDetail() {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>How to redeem</Text>
           <Text style={styles.sectionText}>
-            Contact your program administrator to use this reward. Make sure you have enough points
-            before redeeming.
+            Redeem to generate a QR voucher instantly. Show the QR or voucher code to the cashier
+            before it expires (7 days).
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.redeemButton} activeOpacity={0.85} disabled>
-          <Ionicons name="lock-closed-outline" size={18} color="#fff" />
-          <Text style={styles.redeemButtonText}>Redeem coming soon</Text>
-        </TouchableOpacity>
+        {redeemError && (
+          <View style={styles.errorBox}>
+            <Ionicons name="alert-circle-outline" size={18} color={theme.danger} />
+            <Text style={styles.errorText}>{redeemError}</Text>
+          </View>
+        )}
+
+        {voucher ? (
+          <View style={styles.voucherCard}>
+            <Text style={styles.voucherTitle}>Voucher ready</Text>
+            <Text style={styles.voucherCode}>{voucher.voucher_code}</Text>
+            <Text style={styles.voucherHint}>Show this QR to redeem</Text>
+            {voucher.qr_image_url ? (
+              <Image source={{ uri: voucher.qr_image_url }} style={styles.voucherQr} />
+            ) : (
+              <View style={[styles.voucherQr, styles.voucherQrFallback]}>
+                <Ionicons name="qr-code-outline" size={32} color={theme.primaryDark} />
+              </View>
+            )}
+            <Text style={styles.voucherExpiry}>
+              Expires {new Date(voucher.expires_at).toLocaleString()}
+            </Text>
+          </View>
+        ) : (
+          <TouchableOpacity
+            style={[
+              styles.redeemButton,
+              (!canRedeem || redeeming) && { opacity: 0.6 },
+            ]}
+            activeOpacity={0.85}
+            disabled={!canRedeem || redeeming}
+            onPress={onRedeem}
+          >
+            {redeeming ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Ionicons name="sparkles" size={18} color="#fff" />
+            )}
+            <Text style={styles.redeemButtonText}>
+              {canRedeem ? 'Redeem reward' : 'Not enough points'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {!voucher && (
+          <Text style={styles.helperText}>
+            {userId
+              ? 'You need enough available points for this reward.'
+              : 'Sign in to redeem and view vouchers.'}
+          </Text>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -241,11 +332,58 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 999,
     backgroundColor: theme.primaryDark,
-    opacity: 0.7,
   },
   redeemButtonText: {
     color: '#fff',
     fontWeight: '700',
     fontSize: 16,
   },
+  helperText: {
+    marginTop: 10,
+    color: theme.sub,
+    textAlign: 'center',
+  },
+  errorBox: {
+    marginTop: 8,
+    marginBottom: 8,
+    padding: 10,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  errorText: { color: theme.danger, flex: 1 },
+  voucherCard: {
+    marginTop: 16,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: theme.border,
+    alignItems: 'center',
+    gap: 8,
+  },
+  voucherTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: theme.text,
+  },
+  voucherCode: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: theme.primaryDark,
+    letterSpacing: 2,
+  },
+  voucherHint: { color: theme.sub, fontSize: 14 },
+  voucherQr: { width: 200, height: 200, borderRadius: 12, marginTop: 8, backgroundColor: '#F8FAFC' },
+  voucherQrFallback: {
+    borderWidth: 1,
+    borderColor: theme.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voucherExpiry: { color: theme.sub, fontSize: 13 },
 });

@@ -629,7 +629,7 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
           <View style={styles.liquidContent}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ flexShrink: 1 }}>
-                <Text style={styles.cardTitle}>Complete your tasks</Text>
+                <Text style={styles.cardTitle}>Complete your goal</Text>
                 <View style={styles.progressToggleRow}>
                   <TouchableOpacity
                     style={[styles.progressChip, progressType === 'Walking' && styles.progressChipActive]}

@@ -41,6 +41,8 @@ const STATUS_META: Record<
   { label: string; tint: string; color: string; icon: keyof typeof Ionicons.glyphMap }
 > = {
   approved: { label: 'Approved', tint: '#DCFCE7', color: '#15803D', icon: 'checkmark-circle' },
+  used: { label: 'Used', tint: '#DBEAFE', color: '#1D4ED8', icon: 'checkmark-done' },
+  expired: { label: 'Expired', tint: '#F3F4F6', color: '#6B7280', icon: 'alert-circle' },
   pending:  { label: 'Pending',  tint: '#FEF3C7', color: '#B45309', icon: 'time' },
   rejected: { label: 'Rejected', tint: '#FEE2E2', color: '#B91C1C', icon: 'close-circle' },
   cancelled:{ label: 'Cancelled',tint: '#E5E7EB', color: '#4B5563', icon: 'remove-circle' },
@@ -169,6 +171,12 @@ const RedeemHistoryScreen: React.FC<Props> = ({ route, navigation }) => {
               </View>
               <Text style={styles.date}>{formatDate(item.created_at)}</Text>
             </View>
+            {item.voucher_code && (
+              <View style={styles.codeRow}>
+                <Ionicons name="qr-code-outline" size={14} color={theme.primaryDark} style={{ marginRight: 4 }} />
+                <Text style={styles.codeText}>{item.voucher_code}</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.pointsChip}>
@@ -402,6 +410,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
   },
+  codeRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  codeText: { color: theme.primaryDark, fontWeight: '700', letterSpacing: 1 },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
