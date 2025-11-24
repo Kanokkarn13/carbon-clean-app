@@ -268,7 +268,7 @@ exports.redeemReward = async function redeemReward(req, res) {
     });
 
     const key = `reward_qr/${redemptionId}.png`;
-    const { location } = await uploadToS3(qrBuffer, key, 'image/png');
+    const { url: qrUrl } = await uploadToS3(qrBuffer, key, 'image/png');
 
     const expiresAt = expiresInBangkok(7);
 
@@ -278,7 +278,7 @@ exports.redeemReward = async function redeemReward(req, res) {
         SET voucher_code = ?, qr_payload = ?, qr_image_url = ?, expires_at = ?, status = 'approved'
         WHERE id = ?
       `.trim(),
-      [voucherCode, qrPayload, location, expiresAt, redemptionId],
+      [voucherCode, qrPayload, qrUrl, expiresAt, redemptionId],
     );
 
     await conn.commit();
@@ -287,7 +287,7 @@ exports.redeemReward = async function redeemReward(req, res) {
       redemption_id: redemptionId,
       voucher_code: voucherCode,
       qr_payload: qrPayload,
-      qr_image_url: location,
+      qr_image_url: qrUrl,
       expires_at: expiresAt,
       status: 'approved',
     });

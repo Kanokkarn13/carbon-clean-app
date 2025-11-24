@@ -43,7 +43,17 @@ async function uploadToS3(buffer, key, contentType = 'application/octet-stream')
   await s3.send(command);
 
   const location = `https://${bucketName}.s3.${AWS_REGION}.amazonaws.com/${key}`;
-  return { location, key };
+  let signedUrl = null;
+  try {
+    signedUrl = await getSignedUrl(
+      s3,
+      new GetObjectCommand({ Bucket: bucketName, Key: key }),
+      { expiresIn: 60 * 60 * 24 * 7 }, // 7 days
+    );
+  } catch (err) {
+    console.warn('⚠️ Failed to generate signed URL, falling back to public location', err?.message || err);
+  }
+  return { location, key, url: signedUrl || location };
 }
 
 /**
