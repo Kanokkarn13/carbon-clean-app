@@ -151,7 +151,7 @@ router.delete('/users/:id', verifyToken, verifyAdmin, async (req, res) => {
   catch (err) { console.error(err); res.status(500).json({ message:'DB error' }); }
 });
 
-/* ============== WHO AM I (ให้ FE เอา author_id) ============== */
+/* ============== WHO AM I ============== */
 router.get('/me', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const uid = Number(req.user?.user_id || 0);
@@ -581,7 +581,7 @@ router.get('/rewards', verifyToken, verifyAdmin, async (_req, res) => {
   try {
     const [rows] = await db.query(`
       SELECT id, title, description, image_url, cost_points,
-             expires_at, CAST(active AS UNSIGNED) AS active,
+             start_at, expires_at, CAST(active AS UNSIGNED) AS active,
              stock, created_at, updated_at
       FROM ${REWARD_TABLE}
       ORDER BY created_at DESC, id DESC
@@ -595,25 +595,36 @@ router.get('/rewards', verifyToken, verifyAdmin, async (_req, res) => {
 
 router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    let { title, description, image_url, cost_points, expires_at, active, stock } = req.body;
+    let {
+      title,
+      description,
+      image_url,
+      cost_points,
+      start_at,
+      expires_at,
+      active,
+      stock
+    } = req.body;
+
     title = String(title || '').slice(0, 120);
     description = description ?? '';
     image_url = image_url ? String(image_url).slice(0, 255) : null;
     cost_points = Number.isFinite(Number(cost_points)) ? Number(cost_points) : 0;
     stock = Number.isFinite(Number(stock)) ? Number(stock) : 0;
     active = Number(active) ? 1 : 0;
+    start_at = start_at || null;
     expires_at = expires_at || null;
 
     const [result] = await db.query(
       `INSERT INTO ${REWARD_TABLE}
-        (title, description, image_url, cost_points, expires_at, active, stock, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-      [title, description, image_url, cost_points, expires_at, active, stock]
+        (title, description, image_url, cost_points, start_at, expires_at, active, stock, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [title, description, image_url, cost_points, start_at, expires_at, active, stock]
     );
 
     const [rows] = await db.query(`
       SELECT id, title, description, image_url, cost_points,
-             expires_at, CAST(active AS UNSIGNED) AS active,
+             start_at, expires_at, CAST(active AS UNSIGNED) AS active,
              stock, created_at, updated_at
       FROM ${REWARD_TABLE} WHERE id = ?
     `, [result.insertId]);
@@ -628,25 +639,42 @@ router.post('/rewards', verifyToken, verifyAdmin, async (req, res) => {
 router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    let { title, description, image_url, cost_points, expires_at, active, stock } = req.body;
+    let {
+      title,
+      description,
+      image_url,
+      cost_points,
+      start_at,
+      expires_at,
+      active,
+      stock
+    } = req.body;
+
     const fields = [], values = [];
     if (title !== undefined)      { fields.push('title = ?');       values.push(String(title).slice(0,120)); }
     if (description !== undefined){ fields.push('description = ?'); values.push(String(description)); }
     if (image_url !== undefined)  { fields.push('image_url = ?');   values.push(image_url ? String(image_url).slice(0,255) : null); }
     if (cost_points !== undefined){ fields.push('cost_points = ?'); values.push(Number(cost_points) || 0); }
+    if (start_at !== undefined)   { fields.push('start_at = ?');    values.push(start_at || null); }
     if (expires_at !== undefined) { fields.push('expires_at = ?');  values.push(expires_at || null); }
     if (active !== undefined)     { fields.push('active = ?');      values.push(Number(active) ? 1 : 0); }
     if (stock !== undefined)      { fields.push('stock = ?');       values.push(Number(stock) || 0); }
+
     if (!fields.length) return res.status(400).json({ message: 'No fields to update' });
     fields.push('updated_at = NOW()');
 
-    await db.query(`UPDATE ${REWARD_TABLE} SET ${fields.join(', ')} WHERE id = ?`, [...values, id]);
+    await db.query(
+      `UPDATE ${REWARD_TABLE} SET ${fields.join(', ')} WHERE id = ?`,
+      [...values, id]
+    );
+
     const [rows] = await db.query(`
       SELECT id, title, description, image_url, cost_points,
-             expires_at, CAST(active AS UNSIGNED) AS active,
+             start_at, expires_at, CAST(active AS UNSIGNED) AS active,
              stock, created_at, updated_at
       FROM ${REWARD_TABLE} WHERE id = ?
     `, [id]);
+
     res.json({ success: true, data: rows[0] || null });
   } catch (err) {
     console.error('PUT /admin/rewards/:id error:', err);
@@ -655,13 +683,26 @@ router.put('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
 });
 
 router.patch('/rewards/:id/toggle', verifyToken, verifyAdmin, async (req, res) => {
-  try { await db.query(`UPDATE ${REWARD_TABLE} SET active = 1 - active, updated_at = NOW() WHERE id = ?`, [req.params.id]); res.json({ success:true }); }
-  catch (err) { console.error(err); res.status(500).json({ message:'DB error on toggle' }); }
+  try {
+    await db.query(
+      `UPDATE ${REWARD_TABLE} SET active = 1 - active, updated_at = NOW() WHERE id = ?`,
+      [req.params.id]
+    );
+    res.json({ success:true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message:'DB error on toggle' });
+  }
 });
 
 router.delete('/rewards/:id', verifyToken, verifyAdmin, async (req, res) => {
-  try { await db.query(`DELETE FROM ${REWARD_TABLE} WHERE id = ?`, [req.params.id]); res.json({ success:true }); }
-  catch (err) { console.error(err); res.status(500).json({ message:'DB error on reward delete' }); }
+  try {
+    await db.query(`DELETE FROM ${REWARD_TABLE} WHERE id = ?`, [req.params.id]);
+    res.json({ success:true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message:'DB error on reward delete' });
+  }
 });
 
 router.post('/rewards/upload', verifyToken, verifyAdmin, upload.single('file'), async (req, res) => {
