@@ -445,85 +445,113 @@ router.get('/recent-activities', verifyToken, verifyAdmin, async (req, res) => {
 });
 
 /* ===================== NEW: Activity Explorer (per user) ===================== */
-/*  GET /api/admin/activity?user_id=19&type=all|walk|bike&limit=20&offset=0  */
+/*  GET /api/admin/activity?user_id=19&type=all|walk|bike&limit=20&offset=0
+ *  รองรับ date_from, date_to, window (เหมือนส่วน insights อื่น ๆ)
+ */
 router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const userId = safeInt(req.query.user_id, 0);
-    if (!userId) return res.status(400).json({ message: 'user_id is required' });
-    const type = String(req.query.type || 'all').toLowerCase();
+    if (!userId) {
+      return res.status(400).json({ message: 'user_id is required' });
+    }
+
+    const type   = String(req.query.type || 'all').toLowerCase();
     const limit  = Math.min(safeInt(req.query.limit, 20), 200);
     const offset = Math.max(safeInt(req.query.offset, 0), 0);
 
-    // -------- build SQL ----------
+    // ✅ รองรับ filter เวลา: ใช้ date_from/date_to จาก frontend
+    const window = req.query.window || 'all';
+    const from   = req.query.date_from || req.query.from || '';
+    const to     = req.query.date_to   || req.query.to   || '';
+
+    // ใช้ helper เดิม (ใช้กับ summary/insights อยู่แล้ว)
+    const whereTime = whereByWindowOrRange({ window, from, to });
+
     let dataSql = '';
     let countSql = '';
     let params = [];
     let countParams = [];
 
     if (type === 'walk') {
+      // ----- WALK ONLY -----
       dataSql = `
         SELECT w.id, w.user_id, 'walk' AS type,
                w.distance_km, w.carbonReduce, w.duration_sec, w.step_total,
                w.title, w.description,
-               (CASE WHEN w.duration_sec>0 AND w.distance_km IS NOT NULL
-                     THEN (w.distance_km/(w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+               (CASE WHEN w.duration_sec > 0 AND w.distance_km IS NOT NULL
+                     THEN (w.distance_km / (w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
                w.record_date
         FROM walk_history w
-        WHERE w.user_id = ?
+        WHERE w.user_id = ? AND ${whereTime}
         ORDER BY w.record_date DESC
         LIMIT ? OFFSET ?
       `;
       params = [userId, limit, offset];
-      countSql = `SELECT COUNT(*) AS cnt FROM walk_history WHERE user_id = ?`;
+
+      countSql = `
+        SELECT COUNT(*) AS cnt
+        FROM walk_history
+        WHERE user_id = ? AND ${whereTime}
+      `;
       countParams = [userId];
     } else if (type === 'bike' || type === 'bic' || type === 'bicycle') {
+      // ----- BIKE ONLY -----
       dataSql = `
         SELECT b.id, b.user_id, 'bike' AS type,
                b.distance_km, b.carbonReduce, b.duration_sec, NULL AS step_total,
                b.title, b.description,
-               (CASE WHEN b.duration_sec>0 AND b.distance_km IS NOT NULL
-                     THEN (b.distance_km/(b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+               (CASE WHEN b.duration_sec > 0 AND b.distance_km IS NOT NULL
+                     THEN (b.distance_km / (b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
                b.record_date
         FROM bic_history b
-        WHERE b.user_id = ?
+        WHERE b.user_id = ? AND ${whereTime}
         ORDER BY b.record_date DESC
         LIMIT ? OFFSET ?
       `;
       params = [userId, limit, offset];
-      countSql = `SELECT COUNT(*) AS cnt FROM bic_history WHERE user_id = ?`;
+
+      countSql = `
+        SELECT COUNT(*) AS cnt
+        FROM bic_history
+        WHERE user_id = ? AND ${whereTime}
+      `;
       countParams = [userId];
     } else {
-      // all
+      // ----- ALL (walk + bike) -----
       dataSql = `
         SELECT * FROM (
           SELECT w.id, w.user_id, 'walk' AS type,
                  w.distance_km, w.carbonReduce, w.duration_sec, w.step_total,
                  w.title, w.description,
-                 (CASE WHEN w.duration_sec>0 AND w.distance_km IS NOT NULL
-                       THEN (w.distance_km/(w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+                 (CASE WHEN w.duration_sec > 0 AND w.distance_km IS NOT NULL
+                       THEN (w.distance_km / (w.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
                  w.record_date
           FROM walk_history w
-          WHERE w.user_id = ?
+          WHERE w.user_id = ? AND ${whereTime}
+
           UNION ALL
+
           SELECT b.id, b.user_id, 'bike' AS type,
                  b.distance_km, b.carbonReduce, b.duration_sec, NULL AS step_total,
                  b.title, b.description,
-                 (CASE WHEN b.duration_sec>0 AND b.distance_km IS NOT NULL
-                       THEN (b.distance_km/(b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
+                 (CASE WHEN b.duration_sec > 0 AND b.distance_km IS NOT NULL
+                       THEN (b.distance_km / (b.duration_sec/3600)) ELSE NULL END) AS pace_kmh,
                  b.record_date
           FROM bic_history b
-          WHERE b.user_id = ?
+          WHERE b.user_id = ? AND ${whereTime}
         ) x
         ORDER BY x.record_date DESC
         LIMIT ? OFFSET ?
       `;
       params = [userId, userId, limit, offset];
+
       countSql = `
-        SELECT (
-          (SELECT COUNT(*) FROM walk_history WHERE user_id = ?)
-          +
-          (SELECT COUNT(*) FROM bic_history  WHERE user_id = ?)
-        ) AS cnt
+        SELECT
+          (
+            (SELECT COUNT(*) FROM walk_history WHERE user_id = ? AND ${whereTime})
+            +
+            (SELECT COUNT(*) FROM bic_history  WHERE user_id = ? AND ${whereTime})
+          ) AS cnt
       `;
       countParams = [userId, userId];
     }
@@ -552,14 +580,16 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
       type,
       limit,
       offset,
-      total
+      total,
+      window,
+      from,
+      to
     };
 
     res.json({
       success: true,
       data,
       meta,
-      // ✅ เพิ่ม pagination ให้ FE ใช้งานได้ตรง ๆ
       pagination: {
         total,
         limit,
@@ -571,6 +601,7 @@ router.get('/activity', verifyToken, verifyAdmin, async (req, res) => {
     res.status(500).json({ message: 'DB error' });
   }
 });
+
 
 /* ============================================================
  * REWARDS + S3 PUBLIC
