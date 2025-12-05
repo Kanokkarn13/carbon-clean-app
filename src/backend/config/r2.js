@@ -20,12 +20,12 @@ const {
 
 const AWS_REGION = process.env.AWS_REGION || 'ap-southeast-2';
 
-// Normalize credentials/bucket across R2 + legacy S3 naming
+// Normalize credentials/bucket across R2 + legacy S3-compatible naming
 const accessKeyId = ACCESS_KEY_ID || AWS_ACCESS_KEY_ID || '';
 const secretAccessKey = SECRET_ACCESS_KEY || AWS_SECRET_ACCESS_KEY || '';
 const bucketName = R2_BUCKET || S3_BUCKET || S3_BUCKET_NAME || '';
 
-// Prefer explicit R2 endpoint; fall back to AWS S3 host-style URL
+// Prefer explicit R2 endpoint; fall back to AWS S3-compatible host-style URL
 const endpoint =
   R2_ENDPOINT ||
   (R2_ACCOUNT_ID ? `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined);
