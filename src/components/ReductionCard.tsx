@@ -20,6 +20,11 @@ type Props = {
 
 export default function ReductionCard({ item, onRemove }: Props) {
   const dateStr = formatDateTime(item.create_at);
+  const isElectricity = item.activity_from === 'Electricity' || item.activity_to === 'Electricity';
+  const distanceLabel = isElectricity ? 'Usage change' : 'Distance';
+  const distanceUnit = isElectricity ? 'kWh' : 'km';
+  const distanceValue = Number(item.distance_km);
+
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
@@ -44,9 +49,10 @@ export default function ReductionCard({ item, onRemove }: Props) {
         </Text>
       ) : null}
 
-      {Number(item.distance_km) > 0 && (
+      {distanceValue > 0 && (
         <Text style={styles.line}>
-          Distance: <Text style={styles.strong}>{Number(item.distance_km).toFixed(2)} km</Text>
+          {distanceLabel}:{' '}
+          <Text style={styles.strong}>{distanceValue.toFixed(2)} {distanceUnit}</Text>
         </Text>
       )}
 

@@ -132,14 +132,6 @@ const RedeemHistoryDetailScreen: React.FC<Props> = ({ route, navigation }) => {
         icon: 'sparkles-outline',
       },
       {
-        label: 'Reward points value',
-        value:
-          redemption.reward_cost_points != null
-            ? redemption.reward_cost_points.toLocaleString()
-            : '—',
-        icon: 'pricetag-outline',
-      },
-      {
         label: 'Redeemed on',
         value: formatDate(redemption.created_at),
         icon: 'time-outline',
@@ -268,39 +260,6 @@ const RedeemHistoryDetailScreen: React.FC<Props> = ({ route, navigation }) => {
           ))}
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Redemption Details</Text>
-          <View style={styles.infoCard}>
-            {renderInfoRow('Redemption ID', redemption.id ?? '-')}
-            {renderInfoRow('Reward ID', redemption.reward_id ?? '-')}
-            {renderInfoRow('Status', meta.label)}
-            {renderInfoRow('Voucher Code', redemption.voucher_code ?? '—')}
-            {renderInfoRow('QR Payload', redemption.qr_payload ?? '—')}
-            {renderInfoRow('Expires', expiresText)}
-            {renderInfoRow('Used At', usedText || '—')}
-            {renderInfoRow('Points Used', `${redemption.cost_points.toLocaleString()} pts`)}
-            {renderInfoRow(
-              'Reward Value',
-              redemption.reward_cost_points != null
-                ? `${redemption.reward_cost_points.toLocaleString()} pts`
-                : '—'
-            )}
-            {renderInfoRow('Redeemed On', formatDate(redemption.created_at))}
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Reward Summary</Text>
-          <View style={styles.rewardCard}>
-            <Ionicons
-              name="document-text-outline"
-              size={18}
-              color={theme.sub}
-              style={{ marginTop: 2 }}
-            />
-            <Text style={styles.rewardCardText}>{rewardDescription}</Text>
-          </View>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -429,7 +388,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.border,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'space-around',
     paddingVertical: 18,
     paddingHorizontal: 12,
     shadowColor: '#000',

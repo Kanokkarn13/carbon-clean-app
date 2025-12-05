@@ -20,6 +20,11 @@ type Props = {
 
 export default function EmissionCard({ item, onRemove }: Props) {
   const dateStr = formatDateTime(item.create_at);
+  const isElectricity = (item.activity || '').toLowerCase().includes('electricity');
+  const distanceLabel = isElectricity ? 'Usage change' : 'Distance';
+  const distanceUnit = isElectricity ? 'kWh' : 'km';
+  const distanceValue = Number(item.distance_km);
+
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
@@ -39,9 +44,12 @@ export default function EmissionCard({ item, onRemove }: Props) {
         ) : null}
       </View>
 
-      <Text style={styles.line}>
-        Distance: <Text style={styles.strong}>{Number(item.distance_km).toFixed(2)} km</Text>
-      </Text>
+      {distanceValue > 0 && (
+        <Text style={styles.line}>
+          {distanceLabel}:{' '}
+          <Text style={styles.strong}>{distanceValue.toFixed(2)} {distanceUnit}</Text>
+        </Text>
+      )}
 
       <Text style={styles.line}>
         Emission:{' '}

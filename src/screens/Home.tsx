@@ -60,11 +60,6 @@ const RAW_BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.0.102:3000';
 const BASE_URL = RAW_BASE.replace(/\/+$/, '');
 const api = (p: string) => `${BASE_URL}/api${p}`;
 
-if (__DEV__) {
-  // eslint-disable-next-line no-console
-  console.log('[BASE_URL]', BASE_URL);
-}
-
 const theme = {
   primary: '#07F890',
   primaryDark: '#05C76E',
@@ -203,10 +198,6 @@ function normalizeActivities(raw: any): Activity[] {
     };
   });
 
-  if (__DEV__ && out.length) {
-    // eslint-disable-next-line no-console
-    console.log('[Home] normalizeActivities sample:', out[0]);
-  }
   return out;
 }
 
@@ -505,10 +496,6 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
         }
 
         const list = normalizeActivities(data || []);
-        if (__DEV__) {
-          // eslint-disable-next-line no-console
-          console.log('[Home] activities normalized[0]', list[0]);
-        }
         setActivities(list);
       } catch {
         setActivities([]);
@@ -600,6 +587,12 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
 
   const progressDistance = progressType === 'Walking' ? walkingDistance : cyclingDistance;
   const progressGoal = progressType === 'Walking' ? walkingGoal : cyclingGoal;
+  const isWalking = progressType === 'Walking';
+  const modeIcon = isWalking ? 'walk-outline' : 'bicycle-outline';
+  const modeIconColor = isWalking ? theme.primaryDark : '#2563EB';
+  const modeBg = isWalking ? '#E9F5EF' : '#E6F0FF';
+  const modeText = isWalking ? 'Steps & km tracked' : 'Ride distance logged';
+  const iconPulse = useRef(new Animated.Value(0)).current;
 
   const [dbPoints, setDbPoints] = useState<number | null>(null);
   const [dbPointsLoading, setDbPointsLoading] = useState(false);
@@ -616,6 +609,37 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
   const diffText = `${diff.toFixed(2)} kgCO₂e`;
   const waveHeight = 260; // taller waves
   const waveBottom = -20; // let waves extend to the bottom
+
+  useEffect(() => {
+    iconPulse.setValue(0);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(iconPulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(iconPulse, {
+          toValue: 0,
+          duration: 900,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [iconPulse, modeIcon]);
+
+  const iconWaveStyle = {
+    transform: [
+      {
+        scale: iconPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.15] }),
+      },
+    ],
+    opacity: iconPulse.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
@@ -659,8 +683,8 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
             <LiquidWaves height={waveHeight} bottom={waveBottom} />
           </View>
           <View style={styles.liquidContent}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flexShrink: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+              <View style={{ flexShrink: 1, flex: 1 }}>
                 <Text style={styles.cardTitle}>Complete your goal</Text>
                 <View style={styles.progressToggleRow}>
                   <TouchableOpacity
@@ -700,15 +724,21 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
                 </Text>
               </View>
 
-              <TouchableOpacity
-                style={[styles.pillBtn, { marginTop: 12 }]}
-                onPress={() => (navigation as any).navigate('SetGoal', { user })}
-                activeOpacity={0.9}
-              >
-                <Ionicons name="flag-outline" size={16} color={theme.primaryDark} />
-                <Text style={styles.pillBtnText}>Set your goal</Text>
-              </TouchableOpacity>
+              <View style={styles.progressActions}>
+                <TouchableOpacity
+                  style={[styles.pillBtn, styles.setGoalBtn]}
+                  onPress={() => (navigation as any).navigate('SetGoal', { user })}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons name="flag-outline" size={16} color={theme.primaryDark} />
+                  <Text style={styles.pillBtnText}>Set your goal</Text>
+                </TouchableOpacity>
+              </View>
             </View>
+
+            <Animated.View style={[styles.waveIcon, iconWaveStyle]}>
+              <Ionicons name={modeIcon as any} size={30} color="#FFFFFF" />
+            </Animated.View>
           </View>
         </View>
 
@@ -794,14 +824,6 @@ const Home: React.FC<Props> = ({ user: userProp, navigation }) => {
           loading={loading}
           onItemPress={(activity) => (navigation as any).navigate('RecentAct', { activity })}
         />
-
-        {__DEV__ && (
-          <View style={{ marginTop: 12, alignItems: 'center' }}>
-            <Text style={{ color: theme.sub, fontSize: 12 }}>
-              user_id: {user?.user_id ?? '—'} | focused: {String(isFocused)} | API: {BASE_URL}
-            </Text>
-          </View>
-        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -876,6 +898,7 @@ const styles = StyleSheet.create({
   },
   progressChipText: { fontWeight: '700', color: theme.sub },
   progressChipTextActive: { color: theme.primaryDark },
+  progressActions: { alignItems: 'flex-end', gap: 12, marginTop: 4 },
   progressBarWrap: {
     height: 14, backgroundColor: '#E9F5EF', borderRadius: 999,
     marginTop: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#D9EAE2',
@@ -891,7 +914,24 @@ const styles = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999,
     flexDirection: 'row', alignItems: 'center', gap: 8
   },
+  setGoalBtn: { alignSelf: 'flex-end', marginTop: 6 },
   pillBtnText: { color: theme.primaryDark, fontWeight: '700' },
+  waveIcon: {
+    position: 'absolute',
+    right: 12,
+    bottom: 2,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+  },
 
   quickRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
   quickCard: {

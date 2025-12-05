@@ -29,6 +29,12 @@ const screenWidth = Dimensions.get('window').width;
 const SCREEN_PAD = 16;
 const CARD_HPAD = 14;
 const INNER_WIDTH = screenWidth - SCREEN_PAD * 2 - CARD_HPAD * 2;
+const PIE_COLORS = {
+  emission: '#EF233C',        // red pantone
+  emissionLegend: '#97051D',  // deep carmine
+  reduction: '#76BA9D',       // cambridge green
+  reductionLegend: '#04361D', // dark green
+};
 
 /* ---------- date helpers (ไม่บวก +7) ---------- */
 const isValidDate = (d: any) => d instanceof Date && !Number.isNaN(d.getTime());
@@ -285,6 +291,7 @@ export default function Dashboard() {
                   style={styles.chart}
                   bezier
                   fromZero
+                  yAxisSuffix=" km"
                 />
               </View>
             )}
@@ -342,15 +349,15 @@ export default function Dashboard() {
                     {
                       name: 'Emission',
                       population: Math.max(0.0001, pieEmission),
-                      color: 'rgba(239, 68, 68, 0.85)',
-                      legendFontColor: '#EF4444',
+                      color: PIE_COLORS.emission,
+                      legendFontColor: PIE_COLORS.emissionLegend,
                       legendFontSize: 14,
                     },
                     {
                       name: 'Reduction',
                       population: Math.max(0.0001, pieReduction),
-                      color: 'rgba(16, 185, 129, 0.9)',
-                      legendFontColor: '#07F890',
+                      color: PIE_COLORS.reduction,
+                      legendFontColor: PIE_COLORS.reductionLegend,
                       legendFontSize: 14,
                     },
                   ]}
@@ -359,8 +366,8 @@ export default function Dashboard() {
                   chartConfig={{
                     backgroundColor: '#fff',
                     color: (o = 1) => `rgba(0,0,0,${o})`,
-                    labelColor: () => '#000',
-                    decimalPlaces: 2,
+                    labelColor: () => theme.text,
+                    decimalPlaces: 1,
                   }}
                   accessor="population"
                   backgroundColor="transparent"
@@ -372,14 +379,14 @@ export default function Dashboard() {
           </View>
 
           {/* ---- Carbon reduction leaderboard ---- */}
-          <View style={styles.card}>
-            <View style={styles.leaderboardHeader}>
-              <View>
-                <Text style={styles.sectionTitle}>Carbon Reduction Leaderboard</Text>
-                <Text style={styles.leaderboardSub}>Top users — Walk + Bike combined</Text>
+            <View style={styles.card}>
+              <View style={styles.leaderboardHeader}>
+                <View>
+                  <Text style={styles.sectionTitle}>Carbon Reduction Leaderboard</Text>
+                  <Text style={styles.leaderboardSub}>Top movers this {period} - Walk + Bike combined</Text>
+                </View>
+                {leaderboardLoading && <ActivityIndicator color={theme.primary} />}
               </View>
-              {leaderboardLoading && <ActivityIndicator color={theme.primary} />}
-            </View>
 
             <View style={styles.leaderboardControls}>
               <SegmentedControl
@@ -407,26 +414,42 @@ export default function Dashboard() {
                 ]}
                 value={leaderboardMetric}
                 onChange={(val) => setLeaderboardMetric(val as any)}
-                style={{ flex: 1 }}
+                style={{ alignSelf: 'flex-start' }}
               />
             </View>
 
             <View style={styles.tableHeader}>
-              <Text style={[styles.tableCell, styles.tableRank]}>#</Text>
               <Text style={[styles.tableCell, styles.tableUser]}>User</Text>
               <Text style={[styles.tableCell, styles.tableValue]}>
                 {leaderboardMetric === 'distance' ? 'Distance (km)' : 'Carbon (kg)'}
               </Text>
             </View>
             {leaderboard.map((entry, idx) => (
-              <View key={`${entry.user_id}-${idx}`} style={styles.tableRow}>
-                <Text style={[styles.tableCell, styles.tableRank]}>{idx + 1}</Text>
-                <Text style={[styles.tableCell, styles.tableUser]} numberOfLines={1}>
-                  {entry.name || `User #${entry.user_id ?? '-'}`}
-                </Text>
-                <Text style={[styles.tableCell, styles.tableValue]}>
-                  {Number(entry.value || 0).toFixed(2)}
-                </Text>
+              <View
+                key={`${entry.user_id}-${idx}`}
+                style={[
+                  styles.tableRow,
+                  idx === 0 && styles.rowGold,
+                  idx === 1 && styles.rowSilver,
+                  idx === 2 && styles.rowBronze,
+                ]}
+              >
+                <View style={[styles.rankBadge, idx === 0 && styles.rankGold, idx === 1 && styles.rankSilver, idx === 2 && styles.rankBronze]}>
+                  <Text style={styles.rankText}>{idx + 1}</Text>
+                </View>
+                <View style={styles.userBlock}>
+                  <Text style={styles.userName} numberOfLines={1}>
+                    {entry.name || `User #${entry.user_id ?? '-'}`}
+                  </Text>
+                  <Text style={styles.userMeta} numberOfLines={1}>
+                    {leaderboardMetric === 'distance' ? 'Active distance' : 'Carbon saved'}
+                  </Text>
+                </View>
+                <View style={styles.valuePill}>
+                  <Text style={styles.valueText}>
+                    {Number(entry.value || 0).toFixed(2)} {leaderboardMetric === 'distance' ? 'km' : 'kg'}
+                  </Text>
+                </View>
               </View>
             ))}
             {(!leaderboard || leaderboard.length === 0) && !leaderboardLoading && (
@@ -490,6 +513,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
+    paddingLeft: 44,
+    paddingRight: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.border,
     backgroundColor: '#F8FAFC',
@@ -497,14 +522,44 @@ const styles = StyleSheet.create({
   tableRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.border,
   },
   tableCell: { color: theme.text },
-  tableRank: { width: 32, textAlign: 'center', fontWeight: '700' },
   tableUser: { flex: 1, paddingHorizontal: 8, fontWeight: '700' },
-  tableValue: { width: 100, textAlign: 'right', fontWeight: '700', color: theme.primaryDark },
+  tableValue: { width: 120, textAlign: 'right', fontWeight: '700', color: theme.text },
+  rowGold: { backgroundColor: '#ECFDF3', borderLeftWidth: 3, borderLeftColor: theme.primary },
+  rowSilver: { backgroundColor: '#F4F6FB' },
+  rowBronze: { backgroundColor: '#FFF7ED' },
+  rankBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E8FFF3',
+    borderWidth: 1,
+    borderColor: theme.primary,
+    marginRight: 10,
+  },
+  rankGold: { backgroundColor: theme.primary },
+  rankSilver: { backgroundColor: '#E5E7EB', borderColor: '#CBD5E1' },
+  rankBronze: { backgroundColor: '#FFEEDA', borderColor: '#FBBF24' },
+  rankText: { fontWeight: '800', color: '#0B1721' },
+  userBlock: { flex: 1, paddingRight: 8 },
+  userName: { fontWeight: '700', color: theme.text },
+  userMeta: { color: theme.sub, fontSize: 12, marginTop: 2 },
+  valuePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: '#E8FFF3',
+    borderWidth: 1,
+    borderColor: theme.primary,
+  },
+  valueText: { color: theme.primaryDark, fontWeight: '800' },
   emptyLeaderboard: {
     paddingVertical: 16,
     alignItems: 'center',

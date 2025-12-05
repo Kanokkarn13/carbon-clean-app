@@ -119,17 +119,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
 
   const saveEndpoint = buildSaveEndpoint(goalType);
 
-  // ---- DEBUG: show live metrics changes ----
-  useEffect(() => {
-    console.log('[Tracking] metrics', {
-      isTracking,
-      distance_km: distance,
-      speed_kmh: speed,
-      time_sec: time,
-      steps,
-    });
-  }, [isTracking, distance, speed, time, steps]);
-
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: theme.bg }}>
       {/* Header */}
@@ -283,20 +272,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
               ))}
             </View>
 
-            {/* Debug */}
-            <View style={styles.debugContainer}>
-              <Text style={styles.debugText}>Tracking: {isTracking ? 'ACTIVE' : 'INACTIVE'}</Text>
-              <Text style={styles.debugText}>Subscription: {subscription ? 'EXISTS' : 'NULL'}</Text>
-              {location ? (
-                <Text style={styles.debugTextSmall}>
-                  Lat {location.coords.latitude.toFixed(6)} · Lng {location.coords.longitude.toFixed(6)} ·
-                  Speed {shownSpeed.toFixed(2)} km/h · Updates {updateCount}
-                </Text>
-              ) : (
-                <Text style={styles.debugTextSmall}>Waiting for GPS fix…</Text>
-              )}
-            </View>
-
             {/* Actions */}
             <View style={styles.actionsRow}>
               <TouchableOpacity
@@ -405,15 +380,7 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                       if (saving) return;
                       setSaving(true);
 
-                      // ⬇️ NEW: compute carbon before saving
                       const carbonReduce = computeCarbonReduce(user, distance);
-                      console.log('🧮 [Save] computeCarbonReduce ->', {
-                        distance_km: distance,
-                        vehicle: user?.vehicle,
-                        carbonReduce,
-                        type: typeof carbonReduce,
-                        goalType,
-                      });
 
                       const payload: any = {
                         title: inputTitle,
@@ -431,15 +398,7 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                         }));
                       }
 
-                      console.log('📤 [Save] endpoint + payload', {
-                        saveEndpoint,
-                        goalType,
-                        payload,
-                      });
-
                       const result = await saveActivity(payload, saveEndpoint);
-
-                      console.log('📥 [Save] response', result);
 
                       if (result.ok) {
                         // robust id extraction (string or number)
@@ -477,7 +436,6 @@ export default function TrackingScreen({ user }: TrackingScreenProps) {
                           activityId,
                           carbonReduce,         // for display
                         };
-                        console.log('➡️ [Navigate] CarbonOffsetScreen params', navParams);
 
                         navigation.navigate('CarbonOffsetScreen', navParams);
 
@@ -597,17 +555,6 @@ const styles = StyleSheet.create({
   },
   metricValue: { fontSize: 22, fontWeight: '800', color: theme.text },
   metricLabel: { fontSize: 12, color: theme.sub },
-
-  debugContainer: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#D1FAE5',
-    borderRadius: 12,
-  },
-  debugText: { color: theme.primaryDark, fontWeight: '700' },
-  debugTextSmall: { color: theme.primaryDark, marginTop: 4 },
 
   actionsRow: { flexDirection: 'row', gap: 12, marginTop: 14 },
   actionBtn: {
