@@ -29,6 +29,11 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   connectTimeout: 10000,
+  // TiDB Serverless requires TLS; rely on system CAs.
+  ssl: {
+    minVersion: 'TLSv1.2',
+    rejectUnauthorized: true,
+  },
 });
 
 // ✅ Test connection on startup (once)
