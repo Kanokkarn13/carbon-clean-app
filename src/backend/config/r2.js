@@ -18,7 +18,7 @@ const accessKeyId = ACCESS_KEY_ID || '';
 const secretAccessKey = SECRET_ACCESS_KEY || '';
 const bucketName = R2_BUCKET || '';
 
-// Prefer explicit R2 endpoint
+// Prefer explicit R2 endpoint (required to avoid AWS)
 const endpoint =
   R2_ENDPOINT ||
   (R2_ACCOUNT_ID ? `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined);
@@ -30,14 +30,20 @@ const publicBaseUrl = (() => {
   return '';
 })();
 
-if (!accessKeyId || !secretAccessKey || !bucketName) {
-  console.warn('Storage env vars are missing. Uploads will fail without credentials and bucket.');
+if (!accessKeyId || !secretAccessKey || !bucketName || !endpoint) {
+  console.warn(
+    'Storage env vars are missing. Please set ACCESS_KEY_ID, SECRET_ACCESS_KEY, R2_BUCKET, and R2_ENDPOINT (or R2_ACCOUNT_ID).',
+  );
+}
+
+if (!endpoint) {
+  throw new Error('R2 endpoint is not configured. Set R2_ENDPOINT or R2_ACCOUNT_ID to avoid AWS fallback.');
 }
 
 const r2 = new S3Client({
   region: AWS_REGION,
   endpoint,
-  forcePathStyle: Boolean(endpoint), // R2 requires path-style requests
+  forcePathStyle: true, // R2 requires path-style requests
   credentials: {
     accessKeyId,
     secretAccessKey,
@@ -51,6 +57,9 @@ const r2 = new S3Client({
 async function uploadToR2(buffer, key, contentType = 'application/octet-stream') {
   if (!bucketName) {
     throw new Error('Storage bucket is not configured (set R2_BUCKET)');
+  }
+  if (!endpoint) {
+    throw new Error('R2 endpoint is not configured (set R2_ENDPOINT or R2_ACCOUNT_ID)');
   }
 
   const command = new PutObjectCommand({
