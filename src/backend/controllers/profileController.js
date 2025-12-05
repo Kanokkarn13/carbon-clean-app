@@ -1,7 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const db = require('../config/db');
-const { uploadToS3, getSignedUrlForKey } = require('../config/s3');
+const { uploadToR2, getSignedUrlForKey } = require('../config/r2');
 const { shapeUser } = require('./authController');
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -34,7 +34,7 @@ const uploadProfilePicture = [
       const safeExt = parsed.ext || '.jpg';
       const key = `profilepicture/user-${user_id}-${Date.now()}-${safeName}${safeExt}`;
 
-      const { key: uploadedKey } = await uploadToS3(req.file.buffer, key, req.file.mimetype);
+      const { key: uploadedKey } = await uploadToR2(req.file.buffer, key, req.file.mimetype);
       const signedUrl = await getSignedUrlForKey(uploadedKey);
 
       await db.query('UPDATE users SET profile_picture = ? WHERE user_id = ?', [uploadedKey, user_id]);
@@ -48,10 +48,10 @@ const uploadProfilePicture = [
         data: { url: signedUrl, user },
       });
     } catch (err) {
-      console.error('❌ Upload profile picture error:', err);
+      console.error('[profileController] Upload profile picture error:', err);
       const message =
-        err?.message === 'S3 bucket is not configured (missing S3_BUCKET)'
-          ? 'Server is missing S3 bucket config. Please set S3_BUCKET and restart.'
+        err?.message === 'Storage bucket is not configured (set R2_BUCKET)'
+          ? 'Server is missing storage bucket config. Please set R2_BUCKET and restart.'
           : err?.message || 'Failed to upload profile picture';
       return res.status(500).json({
         success: false,
@@ -79,7 +79,7 @@ const getUserById = async (req, res) => {
     const user = await shapeUser(rows[0]);
     return res.json({ success: true, data: user });
   } catch (err) {
-    console.error('❌ Error fetching user:', err);
+    console.error('[profileController] Error fetching user:', err);
     return res
       .status(500)
       .json({ success: false, message: err?.message || 'Failed to fetch user' });

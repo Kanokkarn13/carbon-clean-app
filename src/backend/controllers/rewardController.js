@@ -1,6 +1,6 @@
 const QRCode = require('qrcode');
 const db = require('../config/db');
-const { uploadToS3, getSignedUrlForKey } = require('../config/s3');
+const { uploadToR2, getSignedUrlForKey, bucketName } = require('../config/r2');
 const {
   generateUniqueVoucherCode,
   buildQrPayload,
@@ -70,8 +70,13 @@ function extractKeyFromUrl(url = '') {
   if (!url) return null;
   try {
     const u = new URL(url);
-    // expect https://bucket.s3.region.amazonaws.com/<key>
-    const key = u.pathname.replace(/^\/+/, '');
+    let key = u.pathname.replace(/^\/+/, '');
+
+    // Handle path-style endpoints where the bucket name is part of the path.
+    if (bucketName && key.startsWith(`${bucketName}/`)) {
+      key = key.slice(bucketName.length).replace(/^\/+/, '');
+    }
+
     return key || null;
   } catch {
     return null;
@@ -88,7 +93,7 @@ async function ensureSignedUrl(url) {
     const signed = await getSignedUrlForKey(key, 60 * 60 * 24 * 3); // 3 days
     return signed;
   } catch (err) {
-    console.warn('⚠️  Failed to sign QR URL, using original', err?.message || err);
+    console.warn('[rewardController] Failed to sign QR URL, using original', err?.message || err);
     return url;
   }
 }
@@ -301,7 +306,7 @@ exports.redeemReward = async function redeemReward(req, res) {
     });
 
     const key = `reward_qr/${redemptionId}.png`;
-    const { url: qrUrl } = await uploadToS3(qrBuffer, key, 'image/png');
+    const { url: qrUrl } = await uploadToR2(qrBuffer, key, 'image/png');
     const signedQrUrl = await ensureSignedUrl(qrUrl);
 
     const expiresAt = expiresInBangkok(7);
@@ -408,3 +413,6 @@ exports.validateVoucher = async function validateVoucher(req, res) {
     conn.release();
   }
 };
+
+
+

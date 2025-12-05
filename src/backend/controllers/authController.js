@@ -1,7 +1,7 @@
 // controllers/authController.js
 const db = require('../config/db');
 const bcrypt = require('bcrypt');
-const { getSignedUrlForKey } = require('../config/s3');
+const { getSignedUrlForKey } = require('../config/r2');
 
 /* ------------------------------- Helpers ------------------------------- */
 const toIntOrNull = (v) => {
