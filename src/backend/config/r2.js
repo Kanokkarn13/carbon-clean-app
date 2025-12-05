@@ -12,8 +12,6 @@ const {
   R2_ACCOUNT_ID,
 } = process.env;
 
-const AWS_REGION = process.env.AWS_REGION || 'auto';
-
 const accessKeyId = ACCESS_KEY_ID || '';
 const secretAccessKey = SECRET_ACCESS_KEY || '';
 const bucketName = R2_BUCKET || '';
@@ -41,7 +39,7 @@ if (!endpoint) {
 }
 
 const r2 = new S3Client({
-  region: AWS_REGION,
+  region: 'auto', // R2 recommends "auto"; no AWS regions
   endpoint,
   forcePathStyle: true, // R2 requires path-style requests
   credentials: {
