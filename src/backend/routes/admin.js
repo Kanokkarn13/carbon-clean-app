@@ -206,14 +206,13 @@ router.get('/summary', verifyToken, verifyAdmin, async (_req, res) => {
         COALESCE((SELECT SUM(distance_km) FROM walk_history),0)
         + COALESCE((SELECT SUM(distance_km) FROM bic_history),0) AS total_km_all,
         COALESCE((SELECT SUM(carbonReduce) FROM walk_history),0)
-        + COALESCE((SELECT SUM(carbonReduce) FROM bic_history),0) AS carbon_total_all,
+        + COALESCE((SELECT SUM(carbonReduce) FROM bic_history),0)
+        + COALESCE((SELECT SUM(point_value)   FROM rc_point),0) AS carbon_total_all,
         COALESCE((SELECT SUM(distance_km) FROM walk_history
                   WHERE YEAR(record_date)=YEAR(CURDATE()) AND MONTH(record_date)=MONTH(CURDATE())),0)
         + COALESCE((SELECT SUM(distance_km) FROM bic_history
                   WHERE YEAR(record_date)=YEAR(CURDATE()) AND MONTH(record_date)=MONTH(CURDATE())),0) AS total_km_month,
-        COALESCE((SELECT SUM(carbonReduce) FROM walk_history
-                  WHERE YEAR(record_date)=YEAR(CURDATE()) AND MONTH(record_date)=MONTH(CURDATE())),0)
-        + COALESCE((SELECT SUM(carbonReduce) FROM bic_history),0) AS carbon_total_month,
+        COALESCE((SELECT SUM(point_value) FROM e_point),0) AS carbon_total_month,
         (SELECT COUNT(*) FROM walk_history) AS walk_count,
         (SELECT COUNT(*) FROM bic_history)  AS bike_count
     `);

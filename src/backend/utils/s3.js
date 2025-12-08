@@ -4,9 +4,22 @@ const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 let _s3 = null;
 function getS3() {
   if (_s3) return _s3;
-  const region = process.env.AWS_REGION;
-  if (!region) throw new Error("AWS region is missing");
-  _s3 = new S3Client({ region });
+
+  // R2 is S3-compatible; accept either R2_* or AWS_* style env vars
+  const region = process.env.R2_REGION || process.env.AWS_REGION || "auto";
+  const endpoint = process.env.R2_ENDPOINT || process.env.AWS_ENDPOINT;
+  const accessKeyId = process.env.ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.ACCESS_KEY_SECRET || process.env.AWS_SECRET_ACCESS_KEY;
+
+  if (!accessKeyId || !secretAccessKey) throw new Error("S3 credentials are missing (ACCESS_KEY_ID / ACCESS_KEY_SECRET)");
+  if (!endpoint) throw new Error("S3 endpoint is missing (set R2_ENDPOINT)");
+
+  _s3 = new S3Client({
+    region,
+    endpoint,
+    forcePathStyle: true, // R2 prefers path-style
+    credentials: { accessKeyId, secretAccessKey },
+  });
   return _s3;
 }
 
@@ -16,8 +29,8 @@ function getS3() {
  * @returns {{ key: string, url: string }} url เป็น path แบบ s3-url มาตรฐาน (อาจจะใช้ไม่ได้ถ้าบัคเก็ต private)
  */
 async function uploadBufferToS3({ buffer, contentType, key, cacheControl }) {
-  const bucket = process.env.S3_BUCKET;
-  if (!bucket) throw new Error("S3 bucket is missing");
+  const bucket = process.env.R2_BUCKET || process.env.S3_BUCKET;
+  if (!bucket) throw new Error("S3 bucket is missing (set R2_BUCKET or S3_BUCKET)");
 
   const s3 = getS3();
   const cmd = new PutObjectCommand({
@@ -31,8 +44,8 @@ async function uploadBufferToS3({ buffer, contentType, key, cacheControl }) {
 
   await s3.send(cmd);
 
-  const region = process.env.AWS_REGION;
-  const url = `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+  const endpoint = process.env.R2_ENDPOINT || process.env.AWS_ENDPOINT;
+  const url = endpoint ? `${endpoint.replace(/\/$/, "")}/${bucket}/${key}` : `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
   return { key, url };
 }
 
@@ -42,8 +55,8 @@ async function uploadBufferToS3({ buffer, contentType, key, cacheControl }) {
  * @param {number} expiresIn seconds (default 3600)
  */
 async function getSignedGetObjectUrl(key, expiresIn = 3600) {
-  const bucket = process.env.S3_BUCKET;
-  if (!bucket) throw new Error("S3 bucket is missing");
+  const bucket = process.env.R2_BUCKET || process.env.S3_BUCKET;
+  if (!bucket) throw new Error("S3 bucket is missing (set R2_BUCKET or S3_BUCKET)");
   const s3 = getS3();
 
   const cmd = new GetObjectCommand({
