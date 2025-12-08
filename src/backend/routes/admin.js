@@ -29,7 +29,11 @@ function buildUpdateSet(allowed, payload) {
   return { setSql: keys.join(', '), values: vals };
 }
 function normalizeUsers(rows) {
-  return rows.map((r) => ({ ...r, status: Number(r.status) }));
+  return rows.map((r) => ({
+    ...r,
+    status: Number(r.status),
+    profile_picture: r.profile_pic_url || null,
+  }));
 }
 function pickTable(type) {
   if (type === 'bike' || type === 'bic' || type === 'bicycle') {
@@ -37,20 +41,21 @@ function pickTable(type) {
   }
   return { table: 'walk_history', label: 'walk' };
 }
-function whereByWindowOrRange({ window, from, to }) {
+function whereByWindowOrRange({ window, from, to }, column = 'record_date') {
   const hasRange = from || to;
   if (hasRange) {
     const f = from ? `${from} 00:00:00` : '1970-01-01 00:00:00';
     const t = to   ? `${to} 23:59:59` : '2999-12-31 23:59:59';
-    return `record_date BETWEEN '${f}' AND '${t}'`;
+    return `${column} BETWEEN '${f}' AND '${t}'`;
   }
   const w = String(window || '').toLowerCase();
-  if (w === '7d') return "record_date >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
-  if (w === '90d') return "record_date >= DATE_SUB(NOW(), INTERVAL 90 DAY)";
-  if (w === 'this_week') return "YEARWEEK(record_date, 1) = YEARWEEK(CURDATE(), 1)";
-  if (w === 'this_month') return "DATE_FORMAT(record_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')";
+  if (w === '7d') return `${column} >= DATE_SUB(NOW(), INTERVAL 7 DAY)`;
+  if (w === '30d') return `${column} >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
+  if (w === '90d') return `${column} >= DATE_SUB(NOW(), INTERVAL 90 DAY)`;
+  if (w === 'this_week') return `YEARWEEK(${column}, 1) = YEARWEEK(CURDATE(), 1)`;
+  if (w === 'this_month') return `DATE_FORMAT(${column}, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`;
   if (w === 'all') return "1=1";
-  return "record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+  return `${column} >= DATE_SUB(NOW(), INTERVAL 30 DAY)`;
 }
 function safeInt(v, def = 0) {
   const n = Number(v);
@@ -60,6 +65,26 @@ function makePublicFileUrl(req, key, group) {
   const base = `${req.protocol}://${req.get('host')}`;
   return `${base}/api/admin/${group}/file?key=${encodeURIComponent(key)}`;
 }
+
+function normalizeType(raw) {
+  const t = String(raw || 'all').toLowerCase();
+  if (t === 'walk') return 'walk';
+  if (t === 'bike' || t === 'bic' || t === 'bicycle') return 'bike';
+  return 'all';
+}
+
+function parseFilters(query) {
+  const type = normalizeType(query.type);
+  const window = query.window;
+  const from = query.date_from || query.from;
+  const to = query.date_to || query.to;
+  const metric = String(query.metric || 'carbon').toLowerCase() === 'distance' ? 'distance' : 'carbon';
+  return { type, window, from, to, metric };
+}
+
+// Optional override for point tables date columns; if unset, skip date filtering to avoid DB errors
+const RC_POINT_DATE_COL = process.env.RC_POINT_DATE_COL || null;
+const E_POINT_DATE_COL = process.env.E_POINT_DATE_COL || null;
 
 /* ============================================================
  * USERS
@@ -175,65 +200,127 @@ router.get('/me', verifyToken, verifyAdmin, async (req, res) => {
 /* ============================================================
  * SUMMARY / INSIGHTS / RECENT
  * ============================================================ */
-router.get('/summary', verifyToken, verifyAdmin, async (_req, res) => {
+router.get('/summary', verifyToken, verifyAdmin, async (req, res) => {
   try {
+    const filters = parseFilters(req.query);
+    const includeWalk = filters.type === 'all' || filters.type === 'walk';
+    const includeBike = filters.type === 'all' || filters.type === 'bike';
+
+    const whereWalk = whereByWindowOrRange(filters, 'record_date');
+    const whereBike = whereByWindowOrRange(filters, 'record_date');
+    const userDateFilters = (filters.window || filters.from || filters.to) ? filters : { ...filters, window: 'all' };
+    const whereUsers = whereByWindowOrRange(userDateFilters, 'u.created_at');
+    const whereEPoint = E_POINT_DATE_COL ? whereByWindowOrRange(filters, E_POINT_DATE_COL) : '1=1';
+    const whereRcPoint = RC_POINT_DATE_COL ? whereByWindowOrRange(filters, RC_POINT_DATE_COL) : '1=1';
+
+    const [walkAggRows] = includeWalk
+      ? await db.query(`
+          SELECT
+            COALESCE(SUM(distance_km),0) AS dist,
+            COALESCE(SUM(carbonReduce),0) AS carbon,
+            COUNT(*) AS cnt
+          FROM walk_history WHERE ${whereWalk}
+        `)
+      : [[{ dist: 0, carbon: 0, cnt: 0 }]];
+    const [bikeAggRows] = includeBike
+      ? await db.query(`
+          SELECT
+            COALESCE(SUM(distance_km),0) AS dist,
+            COALESCE(SUM(carbonReduce),0) AS carbon,
+            COUNT(*) AS cnt
+          FROM bic_history WHERE ${whereBike}
+        `)
+      : [[{ dist: 0, carbon: 0, cnt: 0 }]];
+
+    const walkAgg = walkAggRows[0] || { dist: 0, carbon: 0, cnt: 0 };
+    const bikeAgg = bikeAggRows[0] || { dist: 0, carbon: 0, cnt: 0 };
+
+    // Active users for filter scope (based on filtered activities)
+    const activityUnions = [];
+    const activityUnionsWithDate = [];
+    if (includeWalk) {
+      activityUnionsWithDate.push(`SELECT user_id, record_date FROM walk_history WHERE ${whereWalk}`);
+    }
+    if (includeBike) {
+      activityUnionsWithDate.push(`SELECT user_id, record_date FROM bic_history WHERE ${whereBike}`);
+    }
+    const activeWithDateSql = activityUnionsWithDate.length
+      ? activityUnionsWithDate.join(' UNION ALL ')
+      : 'SELECT NULL AS user_id, NULL AS record_date WHERE 0';
+
     const [ovRows] = await db.query(`
       SELECT COUNT(*) AS total_users,
-             SUM(CAST(status AS UNSIGNED)) AS active_users,
-             SUM(CASE WHEN CAST(status AS UNSIGNED)=0 THEN 1 ELSE 0 END) AS blocked_users,
-             COUNT(CASE WHEN role='admin' THEN 1 END) AS admins,
-             COUNT(CASE WHEN created_at >= (CURRENT_DATE - INTERVAL 7 DAY) THEN 1 END) AS new_7d,
-             AVG(house_member) AS avg_household,
-             AVG(walk_goal) AS avg_walk_goal,
-             AVG(bic_goal)  AS avg_bic_goal
-      FROM users
+             SUM(CAST(u.status AS UNSIGNED)) AS active_users,
+             SUM(CASE WHEN CAST(u.status AS UNSIGNED)=0 THEN 1 ELSE 0 END) AS blocked_users,
+             COUNT(CASE WHEN u.role='admin' THEN 1 END) AS admins,
+             COUNT(CASE WHEN u.created_at >= (CURRENT_DATE - INTERVAL 7 DAY) THEN 1 END) AS new_7d,
+             AVG(u.house_member) AS avg_household,
+             AVG(u.walk_goal) AS avg_walk_goal,
+             AVG(u.bic_goal)  AS avg_bic_goal
+      FROM users u
+      WHERE ${whereUsers}
     `);
     const ov = ovRows[0] || {};
+
     const [mon] = await db.query(`
-      SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym, COUNT(*) AS users
-      FROM users
-      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+      SELECT DATE_FORMAT(u.created_at, '%Y-%m') AS ym, COUNT(*) AS users
+      FROM users u
+      WHERE ${whereUsers}
       GROUP BY ym ORDER BY ym
     `);
-    const [statusRows] = await db.query(`SELECT CAST(status AS UNSIGNED) AS status, COUNT(*) AS cnt FROM users GROUP BY CAST(status AS UNSIGNED)`);
-    const [roleRows]   = await db.query(`SELECT role, COUNT(*) AS cnt FROM users GROUP BY role`);
-    const [vehicleRows]= await db.query(`
-      SELECT COALESCE(NULLIF(TRIM(vehicle), ''), '(none)') AS vehicle, COUNT(*) AS cnt
-      FROM users GROUP BY vehicle ORDER BY cnt DESC LIMIT 8
+    const [statusRows] = await db.query(`
+      SELECT CAST(u.status AS UNSIGNED) AS status, COUNT(*) AS cnt
+      FROM users u
+      WHERE ${whereUsers}
+      GROUP BY CAST(u.status AS UNSIGNED)
     `);
-    const [aggAll] = await db.query(`
-      SELECT
-        COALESCE((SELECT SUM(distance_km) FROM walk_history),0)
-        + COALESCE((SELECT SUM(distance_km) FROM bic_history),0) AS total_km_all,
-        COALESCE((SELECT SUM(carbonReduce) FROM walk_history),0)
-        + COALESCE((SELECT SUM(carbonReduce) FROM bic_history),0)
-        + COALESCE((SELECT SUM(point_value)   FROM rc_point),0) AS carbon_total_all,
-        COALESCE((SELECT SUM(distance_km) FROM walk_history
-                  WHERE YEAR(record_date)=YEAR(CURDATE()) AND MONTH(record_date)=MONTH(CURDATE())),0)
-        + COALESCE((SELECT SUM(distance_km) FROM bic_history
-                  WHERE YEAR(record_date)=YEAR(CURDATE()) AND MONTH(record_date)=MONTH(CURDATE())),0) AS total_km_month,
-        COALESCE((SELECT SUM(point_value) FROM e_point),0) AS carbon_total_month,
-        (SELECT COUNT(*) FROM walk_history) AS walk_count,
-        (SELECT COUNT(*) FROM bic_history)  AS bike_count
+    const [roleRows] = await db.query(`
+      SELECT u.role, COUNT(*) AS cnt
+      FROM users u
+      WHERE ${whereUsers}
+      GROUP BY u.role
     `);
+    const [vehicleRows] = await db.query(`
+      SELECT COALESCE(NULLIF(TRIM(u.vehicle), ''), '(none)') AS vehicle, COUNT(*) AS cnt
+      FROM users u
+      WHERE ${whereUsers}
+      GROUP BY vehicle ORDER BY cnt DESC LIMIT 8
+    `);
+
+    // Unfiltered user totals (all time) so KPI shows full user base
+    const [allUserTotalsRows] = await db.query(`
+      SELECT COUNT(*) AS total_users_alltime,
+             SUM(CAST(status AS UNSIGNED)) AS active_users_alltime,
+             SUM(CASE WHEN CAST(status AS UNSIGNED)=0 THEN 1 ELSE 0 END) AS blocked_users_alltime,
+             COUNT(CASE WHEN role='admin' THEN 1 END) AS admins_alltime
+      FROM users
+    `);
+    const allUserTotals = allUserTotalsRows[0] || {};
+
+    const [rcPointRows] = await db.query(`
+      SELECT COALESCE(SUM(point_value),0) AS total FROM rc_point WHERE ${whereRcPoint}
+    `);
+    const [ePointRows] = await db.query(`
+      SELECT COALESCE(SUM(point_value),0) AS total FROM e_point WHERE ${whereEPoint}
+    `);
+
     const [avgRows] = await db.query(`
       SELECT
-        (SELECT AVG(distance_km) FROM walk_history WHERE distance_km > 0) AS walk_avg_km,
-        (SELECT AVG(distance_km) FROM bic_history  WHERE distance_km > 0) AS bike_avg_km,
+        (SELECT AVG(distance_km) FROM walk_history WHERE distance_km > 0 AND ${whereWalk}) AS walk_avg_km,
+        (SELECT AVG(distance_km) FROM bic_history  WHERE distance_km > 0 AND ${whereBike}) AS bike_avg_km,
         (SELECT AVG(distance_km / (duration_sec/3600))
-           FROM walk_history WHERE duration_sec IS NOT NULL AND duration_sec > 0 AND distance_km IS NOT NULL) AS walk_avg_pace_kmh,
+           FROM walk_history WHERE duration_sec IS NOT NULL AND duration_sec > 0 AND distance_km IS NOT NULL AND ${whereWalk}) AS walk_avg_pace_kmh,
         (SELECT AVG(distance_km / (duration_sec/3600))
-           FROM bic_history  WHERE duration_sec IS NOT NULL AND duration_sec > 0 AND distance_km IS NOT NULL) AS bike_avg_pace_kmh
+           FROM bic_history  WHERE duration_sec IS NOT NULL AND duration_sec > 0 AND distance_km IS NOT NULL AND ${whereBike}) AS bike_avg_pace_kmh
     `);
+
     const [activeRows] = await db.query(`
       SELECT
         (SELECT COUNT(DISTINCT user_id) FROM (
-           SELECT user_id, record_date FROM walk_history
-           UNION ALL SELECT user_id, record_date FROM bic_history
+           ${activeWithDateSql}
          ) u WHERE u.record_date >= DATE_SUB(NOW(), INTERVAL 7 DAY))  AS active7,
         (SELECT COUNT(DISTINCT user_id) FROM (
-           SELECT user_id, record_date FROM walk_history
-           UNION ALL SELECT user_id, record_date FROM bic_history
+           ${activeWithDateSql}
          ) u WHERE u.record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)) AS active30
     `);
 
@@ -241,7 +328,7 @@ router.get('/summary', verifyToken, verifyAdmin, async (_req, res) => {
       success: true,
       data: {
         overview: {
-          total_users: Number(ov.total_users) || 0,
+          total_users: Number(allUserTotals.total_users_alltime) || 0,
           active_users: Number(ov.active_users) || 0,
           blocked_users: Number(ov.blocked_users) || 0,
           admins: Number(ov.admins) || 0,
@@ -255,16 +342,16 @@ router.get('/summary', verifyToken, verifyAdmin, async (_req, res) => {
         role_breakdown: roleRows.map(r => ({ role: r.role || '(unknown)', count: Number(r.cnt) })),
         vehicle_distribution: vehicleRows.map(r => ({ vehicle: r.vehicle, count: Number(r.cnt) })),
         activity: {
-          walk_count: Number(aggAll[0].walk_count) || 0,
-          bike_count: Number(aggAll[0].bike_count) || 0,
-          total_km_all: Number(aggAll[0].total_km_all) || 0,
-          total_km_month: Number(aggAll[0].total_km_month) || 0,
-          carbon_total_all: Number(aggAll[0].carbon_total_all) || 0,
-          carbon_total_month: Number(aggAll[0].carbon_total_month) || 0,
-          walk_avg_km:        avgRows[0].walk_avg_km        == null ? 0 : Number(avgRows[0].walk_avg_km),
-          bike_avg_km:        avgRows[0].bike_avg_km        == null ? 0 : Number(avgRows[0].bike_avg_km),
-          walk_avg_pace_kmh:  avgRows[0].walk_avg_pace_kmh  == null ? 0 : Number(avgRows[0].walk_avg_pace_kmh),
-          bike_avg_pace_kmh:  avgRows[0].bike_avg_pace_kmh  == null ? 0 : Number(avgRows[0].bike_avg_pace_kmh),
+          walk_count: includeWalk ? Number(walkAgg.cnt) || 0 : 0,
+          bike_count: includeBike ? Number(bikeAgg.cnt) || 0 : 0,
+          total_km_all: (includeWalk ? Number(walkAgg.dist) : 0) + (includeBike ? Number(bikeAgg.dist) : 0),
+          total_km_month: (includeWalk ? Number(walkAgg.dist) : 0) + (includeBike ? Number(bikeAgg.dist) : 0),
+          carbon_total_all: (includeWalk ? Number(walkAgg.carbon) : 0) + (includeBike ? Number(bikeAgg.carbon) : 0) + Number(rcPointRows[0]?.total || 0),
+          carbon_total_month: Number(ePointRows[0]?.total || 0),
+          walk_avg_km:        includeWalk && avgRows[0].walk_avg_km        != null ? Number(avgRows[0].walk_avg_km) : 0,
+          bike_avg_km:        includeBike && avgRows[0].bike_avg_km        != null ? Number(avgRows[0].bike_avg_km) : 0,
+          walk_avg_pace_kmh:  includeWalk && avgRows[0].walk_avg_pace_kmh  != null ? Number(avgRows[0].walk_avg_pace_kmh) : 0,
+          bike_avg_pace_kmh:  includeBike && avgRows[0].bike_avg_pace_kmh  != null ? Number(avgRows[0].bike_avg_pace_kmh) : 0,
           active7:  Number(activeRows[0].active7)  || 0,
           active30: Number(activeRows[0].active30) || 0,
         }
@@ -278,9 +365,9 @@ router.get('/summary', verifyToken, verifyAdmin, async (_req, res) => {
 
 router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { type = 'walk', window, from, to } = req.query;
-    const { table } = pickTable(String(type).toLowerCase());
-    const whereTime = whereByWindowOrRange({ window, from, to });
+    const filters = parseFilters(req.query);
+    const { table } = pickTable(filters.type);
+    const whereTime = whereByWindowOrRange(filters, 'record_date');
     const [rows] = await db.query(`
       SELECT HOUR(record_date) AS h, COUNT(*) AS cnt
       FROM ${table} WHERE ${whereTime}
@@ -299,9 +386,9 @@ router.get('/insights/hourly', verifyToken, verifyAdmin, async (req, res) => {
 
 router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { type = 'walk', window, from, to } = req.query;
-    const { table } = pickTable(String(type).toLowerCase());
-    const whereTime = whereByWindowOrRange({ window, from, to });
+    const filters = parseFilters(req.query);
+    const { table } = pickTable(filters.type);
+    const whereTime = whereByWindowOrRange(filters, 'record_date');
     const [rows] = await db.query(`
       SELECT (DAYOFWEEK(record_date) - 1) AS wd, COUNT(*) AS cnt
       FROM ${table} WHERE ${whereTime}
@@ -320,9 +407,9 @@ router.get('/insights/weekday', verifyToken, verifyAdmin, async (req, res) => {
 
 router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { type = 'walk', window, from, to } = req.query;
-    const { table } = pickTable(String(type).toLowerCase());
-    const whereTime = whereByWindowOrRange({ window, from, to });
+    const filters = parseFilters(req.query);
+    const { table } = pickTable(filters.type);
+    const whereTime = whereByWindowOrRange(filters, 'record_date');
     const [rows] = await db.query(`
       SELECT CASE WHEN distance_km >= 20 THEN 20 ELSE FLOOR(distance_km) END AS bin,
              COUNT(*) AS cnt
@@ -343,29 +430,34 @@ router.get('/insights/distance_hist', verifyToken, verifyAdmin, async (req, res)
 
 router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const metric = String(req.query.metric || 'carbon').toLowerCase();
-    const { window, from, to } = req.query;
-    const whereWindow = whereByWindowOrRange({ window, from, to });
-    const metricExpr = metric === 'distance' ? 'distance_km' : 'carbonReduce';
+    const filters = parseFilters(req.query);
+    const metricExpr = filters.metric === 'distance' ? 'distance_km' : 'carbonReduce';
+    const whereWindow = whereByWindowOrRange(filters, 'record_date');
+
+    const parts = [];
+    if (filters.type === 'all' || filters.type === 'walk') {
+      parts.push(`SELECT user_id, ${metricExpr} AS val, record_date FROM walk_history WHERE ${whereWindow}`);
+    }
+    if (filters.type === 'all' || filters.type === 'bike') {
+      parts.push(`SELECT user_id, ${metricExpr} AS val, record_date FROM bic_history WHERE ${whereWindow}`);
+    }
+    const unionSql = parts.length ? parts.join(' UNION ALL ') : 'SELECT NULL AS user_id, 0 AS val, NULL AS record_date WHERE 0';
+
     const [rows] = await db.query(`
       SELECT u.user_id,
              CONCAT(COALESCE(u.fname,''), ' ', COALESCE(u.lname,'')) AS name,
-             u.email, SUM(x.${metricExpr}) AS total_value
-      FROM (
-        SELECT user_id, ${metricExpr}, record_date FROM walk_history WHERE ${whereWindow}
-        UNION ALL
-        SELECT user_id, ${metricExpr}, record_date FROM bic_history  WHERE ${whereWindow}
-      ) x
+             u.email, SUM(x.val) AS total_value
+      FROM (${unionSql}) x
       JOIN users u ON u.user_id = x.user_id
       GROUP BY u.user_id, name, u.email
-      ORDER BY total_value DESC LIMIT 20
+      ORDER BY total_value DESC LIMIT 10
     `);
     const data = rows.map(r => ({
       user_id: r.user_id,
       name: (r.name || '').trim() || r.email || `user_${r.user_id}`,
       total: Number(r.total_value || 0),
     }));
-    res.json({ success: true, data, meta: { window, metric, from, to } });
+    res.json({ success: true, data, meta: { window: filters.window, metric: filters.metric, from: filters.from, to: filters.to, type: filters.type } });
   } catch (err) {
     console.error('GET /admin/insights/leaderboard error:', err);
     res.status(500).json({ message: 'DB error' });
@@ -374,19 +466,25 @@ router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) =
 
 router.get('/insights/aggregates', verifyToken, verifyAdmin, async (req, res) => {
   try {
-    const { window, from, to } = req.query;
-    const whereTime = whereByWindowOrRange({ window, from, to });
+    const filters = parseFilters(req.query);
+    const whereTime = whereByWindowOrRange(filters, 'record_date');
+    const whereRcPointAgg = RC_POINT_DATE_COL ? whereByWindowOrRange(filters, RC_POINT_DATE_COL) : '1=1';
+    const whereEPointAgg = E_POINT_DATE_COL ? whereByWindowOrRange(filters, E_POINT_DATE_COL) : '1=1';
+    const includeWalk = filters.type === 'all' || filters.type === 'walk';
+    const includeBike = filters.type === 'all' || filters.type === 'bike';
     const EF_WALK = Number(process.env.EF_WALK_KG_PER_KM ?? 0);
     const EF_BIKE = Number(process.env.EF_BIKE_KG_PER_KM ?? 0.016);
 
     const [rows] = await db.query(
       `
       SELECT
-        COALESCE((SELECT SUM(w.carbonReduce) FROM walk_history w WHERE ${whereTime}), 0)
-        + COALESCE((SELECT SUM(b.carbonReduce) FROM bic_history  b WHERE ${whereTime}), 0) AS carbon_reduced,
-        COALESCE((SELECT SUM(w.distance_km) FROM walk_history w WHERE ${whereTime}), 0) * ?
-        + COALESCE((SELECT SUM(b.distance_km) FROM bic_history  b WHERE ${whereTime}), 0) * ? AS carbon_emitted
-      `, [EF_WALK, EF_BIKE]
+        ${includeWalk ? `COALESCE((SELECT SUM(w.carbonReduce) FROM walk_history w WHERE ${whereTime}), 0)` : '0'}
+        +
+        ${includeBike ? `COALESCE((SELECT SUM(b.carbonReduce) FROM bic_history  b WHERE ${whereTime}), 0)` : '0'}
+        +
+        COALESCE((SELECT SUM(point_value) FROM rc_point WHERE ${whereRcPointAgg}), 0) AS carbon_reduced,
+        COALESCE((SELECT SUM(point_value) FROM e_point WHERE ${whereEPointAgg}), 0) AS carbon_emitted
+      `, [includeWalk ? EF_WALK : 0, includeBike ? EF_BIKE : 0]
     );
 
     res.json({ success: true, data: {
@@ -395,6 +493,145 @@ router.get('/insights/aggregates', verifyToken, verifyAdmin, async (req, res) =>
     }});
   } catch (err) {
     console.error('GET /admin/insights/aggregates error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+// Ledger of activities contributing to carbon reduced
+router.get('/insights/ledger/reduced', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const filters = parseFilters(req.query);
+    const whereTime = whereByWindowOrRange(filters, 'record_date');
+    const includeWalk = filters.type === 'all' || filters.type === 'walk';
+    const includeBike = filters.type === 'all' || filters.type === 'bike';
+    const rcDateCol = RC_POINT_DATE_COL || 'create_at';
+    const whereRcTime = whereByWindowOrRange(filters, rcDateCol);
+    const limit = Math.min(Number(req.query.limit || 10), 100);
+
+    const parts = [];
+    if (includeWalk) {
+      parts.push(`
+        SELECT w.record_date, 'walk' AS type, w.distance_km, w.carbonReduce,
+               u.user_id, CONCAT(COALESCE(u.fname,''),' ',COALESCE(u.lname,'')) AS name, u.email,
+               NULL AS activity_from, NULL AS param_from, NULL AS activity_to, NULL AS param_to
+        FROM walk_history w JOIN users u ON u.user_id = w.user_id
+        WHERE ${whereTime}
+      `);
+    }
+    if (includeBike) {
+      parts.push(`
+        SELECT b.record_date, 'bike' AS type, b.distance_km, b.carbonReduce,
+               u.user_id, CONCAT(COALESCE(u.fname,''),' ',COALESCE(u.lname,'')) AS name, u.email,
+               NULL AS activity_from, NULL AS param_from, NULL AS activity_to, NULL AS param_to
+        FROM bic_history b JOIN users u ON u.user_id = b.user_id
+        WHERE ${whereTime}
+      `);
+    }
+    // rc_point entries with both activity_from and activity_to present
+    parts.push(`
+      SELECT r.${rcDateCol} AS record_date, 'rc_point' AS type, r.distance_km, r.point_value AS carbonReduce,
+             u.user_id, CONCAT(COALESCE(u.fname,''),' ',COALESCE(u.lname,'')) AS name, u.email,
+             r.activity_from, r.param_from, r.activity_to, r.param_to
+      FROM rc_point r JOIN users u ON u.user_id = r.user_id
+      WHERE ${whereRcTime}
+        AND COALESCE(NULLIF(TRIM(r.activity_from),''), '') <> ''
+        AND COALESCE(NULLIF(TRIM(r.activity_to),''), '') <> ''
+    `);
+    const unionSql = parts.length ? parts.join(' UNION ALL ') : 'SELECT NULL AS record_date, NULL AS type, NULL AS distance_km, NULL AS carbonReduce, NULL AS user_id, NULL AS name, NULL AS email WHERE 0';
+
+    const [rows] = await db.query(`
+      SELECT * FROM (${unionSql}) x
+      ORDER BY record_date DESC
+      LIMIT ${limit}
+    `);
+
+    const [totals] = await db.query(`
+      SELECT
+        ${includeWalk ? `COALESCE((SELECT SUM(carbonReduce) FROM walk_history WHERE ${whereTime}),0)` : '0'}
+        +
+        ${includeBike ? `COALESCE((SELECT SUM(carbonReduce) FROM bic_history WHERE ${whereTime}),0)` : '0'}
+        +
+        COALESCE((SELECT SUM(point_value) FROM rc_point WHERE ${whereRcTime}
+                  AND COALESCE(NULLIF(TRIM(activity_from),''), '') <> ''
+                  AND COALESCE(NULLIF(TRIM(activity_to),''), '') <> ''),0) AS carbon_total
+    `);
+
+    const data = rows.map(r => ({
+      date: r.record_date,
+      type: r.type,
+      distance_km: r.distance_km == null ? null : Number(r.distance_km),
+      carbon_reduced: r.carbonReduce == null ? null : Number(r.carbonReduce),
+      user_id: r.user_id,
+      user_name: (r.name || '').trim() || r.email || (r.user_id ? `user_${r.user_id}` : ''),
+      email: r.email,
+      activity_from: r.activity_from || null,
+      param_from: r.param_from || null,
+      activity_to: r.activity_to || null,
+      param_to: r.param_to || null,
+    }));
+
+    res.json({
+      success: true,
+      data,
+      totals: { carbon_reduced: Number(totals[0]?.carbon_total || 0) },
+      meta: { window: filters.window, from: filters.from, to: filters.to, type: filters.type, limit }
+    });
+  } catch (err) {
+    console.error('GET /admin/insights/ledger/reduced error:', err);
+    res.status(500).json({ message: 'DB error' });
+  }
+});
+
+// Ledger of activities contributing to carbon emitted (from e_point)
+router.get('/insights/ledger/emitted', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const filters = parseFilters(req.query);
+    const eDateCol = E_POINT_DATE_COL || 'create_at';
+    const whereETime = whereByWindowOrRange(filters, eDateCol);
+    const limit = Math.min(Number(req.query.limit || 10), 100);
+
+    const [rows] = await db.query(`
+      SELECT
+        e.${eDateCol} AS record_date,
+        'e_point' AS type,
+        e.activity,
+        e.point_value AS carbon_emitted,
+        e.distance_km,
+        u.user_id,
+        CONCAT(COALESCE(u.fname,''),' ',COALESCE(u.lname,'')) AS name,
+        u.email
+      FROM e_point e
+      JOIN users u ON u.user_id = e.user_id
+      WHERE ${whereETime}
+      ORDER BY e.${eDateCol} DESC
+      LIMIT ${limit}
+    `);
+
+    const [totals] = await db.query(`
+      SELECT COALESCE(SUM(point_value),0) AS carbon_total
+      FROM e_point
+      WHERE ${whereETime}
+    `);
+
+    const data = rows.map(r => ({
+      date: r.record_date,
+      type: r.type,
+      activity: r.activity || null,
+      distance_km: r.distance_km == null ? null : Number(r.distance_km),
+      carbon_emitted: r.carbon_emitted == null ? null : Number(r.carbon_emitted),
+      user_id: r.user_id,
+      user_name: (r.name || '').trim() || r.email || (r.user_id ? `user_${r.user_id}` : ''),
+      email: r.email,
+    }));
+
+    res.json({
+      success: true,
+      data,
+      totals: { carbon_emitted: Number(totals[0]?.carbon_total || 0) },
+      meta: { window: filters.window, from: filters.from, to: filters.to, limit }
+    });
+  } catch (err) {
+    console.error('GET /admin/insights/ledger/emitted error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
