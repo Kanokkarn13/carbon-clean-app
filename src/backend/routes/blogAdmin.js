@@ -107,7 +107,9 @@ router.post(
       res.status(201).json({ success: true, data: rows[0] });
     } catch (err) {
       console.error('POST /admin/blogs error:', err);
-      res.status(500).json({ message: 'Create failed' });
+      res.status(500).json({ message: 'Create failed',
+    error: err?.message || String(err),
+    code: err?.code, });
     }
   }
 );
