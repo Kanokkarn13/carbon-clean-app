@@ -467,35 +467,81 @@ router.get('/insights/leaderboard', verifyToken, verifyAdmin, async (req, res) =
 router.get('/insights/aggregates', verifyToken, verifyAdmin, async (req, res) => {
   try {
     const filters = parseFilters(req.query);
+
+    // activity tables ใช้ record_date เหมือนเดิม
     const whereTime = whereByWindowOrRange(filters, 'record_date');
-    const whereRcPointAgg = RC_POINT_DATE_COL ? whereByWindowOrRange(filters, RC_POINT_DATE_COL) : '1=1';
-    const whereEPointAgg = E_POINT_DATE_COL ? whereByWindowOrRange(filters, E_POINT_DATE_COL) : '1=1';
+
+    // ✅ รองรับ RC_POINT_DATE_COL / E_POINT_DATE_COL ถ้ามีตั้งไว้
+    // ✅ ถ้าไม่ตั้ง ให้ลอง create_at / created_at อัตโนมัติ (กัน DB schema ไม่เหมือนกัน)
+    const rcCandidates = RC_POINT_DATE_COL ? [RC_POINT_DATE_COL] : ['create_at', 'created_at'];
+    const eCandidates  = E_POINT_DATE_COL  ? [E_POINT_DATE_COL]  : ['create_at', 'created_at'];
+
     const includeWalk = filters.type === 'all' || filters.type === 'walk';
     const includeBike = filters.type === 'all' || filters.type === 'bike';
-    const EF_WALK = Number(process.env.EF_WALK_KG_PER_KM ?? 0);
-    const EF_BIKE = Number(process.env.EF_BIKE_KG_PER_KM ?? 0.016);
 
-    const [rows] = await db.query(
-      `
-      SELECT
-        ${includeWalk ? `COALESCE((SELECT SUM(w.carbonReduce) FROM walk_history w WHERE ${whereTime}), 0)` : '0'}
-        +
-        ${includeBike ? `COALESCE((SELECT SUM(b.carbonReduce) FROM bic_history  b WHERE ${whereTime}), 0)` : '0'}
-        +
-        COALESCE((SELECT SUM(point_value) FROM rc_point WHERE ${whereRcPointAgg}), 0) AS carbon_reduced,
-        COALESCE((SELECT SUM(point_value) FROM e_point WHERE ${whereEPointAgg}), 0) AS carbon_emitted
-      `, [includeWalk ? EF_WALK : 0, includeBike ? EF_BIKE : 0]
-    );
+    // ลองคอมโบ column จนกว่าจะ query ผ่าน
+    let rows = null;
+    let lastErr = null;
 
-    res.json({ success: true, data: {
-      carbon_reduced: Number(rows[0]?.carbon_reduced || 0),
-      carbon_emitted: Number(rows[0]?.carbon_emitted || 0)
-    }});
+    for (const rcCol of rcCandidates) {
+      for (const eCol of eCandidates) {
+        try {
+          const whereRcPointAgg = whereByWindowOrRange(filters, rcCol);
+          const whereEPointAgg  = whereByWindowOrRange(filters, eCol);
+
+          const [r] = await db.query(`
+            SELECT
+              ${
+                includeWalk
+                  ? `COALESCE((SELECT SUM(w.carbonReduce) FROM walk_history w WHERE ${whereTime}), 0)`
+                  : '0'
+              }
+              +
+              ${
+                includeBike
+                  ? `COALESCE((SELECT SUM(b.carbonReduce) FROM bic_history  b WHERE ${whereTime}), 0)`
+                  : '0'
+              }
+              +
+              COALESCE((SELECT SUM(point_value) FROM rc_point WHERE ${whereRcPointAgg}), 0) AS carbon_reduced,
+
+              COALESCE((SELECT SUM(point_value) FROM e_point  WHERE ${whereEPointAgg}), 0) AS carbon_emitted
+          `);
+
+          rows = r;
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          // ถ้าเป็น Unknown column ให้ลองชื่อ column อื่นต่อ
+          const msg = String(err?.message || '');
+          if (!msg.toLowerCase().includes('unknown column')) {
+            // ถ้า error ไม่ใช่เรื่องคอลัมน์ ให้โยนขึ้นไปเลย
+            throw err;
+          }
+        }
+      }
+      if (rows) break;
+    }
+
+    if (!rows) {
+      console.error('GET /admin/insights/aggregates error (column candidates failed):', lastErr);
+      return res.status(500).json({ message: 'DB error' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        carbon_reduced: Number(rows[0]?.carbon_reduced || 0),
+        carbon_emitted: Number(rows[0]?.carbon_emitted || 0),
+      },
+    });
   } catch (err) {
     console.error('GET /admin/insights/aggregates error:', err);
     res.status(500).json({ message: 'DB error' });
   }
 });
+
 
 // Ledger of activities contributing to carbon reduced
 router.get('/insights/ledger/reduced', verifyToken, verifyAdmin, async (req, res) => {
