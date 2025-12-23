@@ -1177,4 +1177,108 @@ router.get('/blogs/file', async (req, res) => {
   }
 });
 
+
+
+
+
+
+/* ============================================================
+ * REWARD REDEMPTION HISTORY
+ * ============================================================ */
+const REDEMPTION_TABLE = 'reward_redemption';
+
+router.get('/rewards/redemptions', verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const toInt = (v, d) => {
+      const n = parseInt(String(v ?? ''), 10);
+      return Number.isFinite(n) ? n : d;
+    };
+    const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+    const limit = clamp(toInt(req.query.limit, 100), 1, 200);
+    const offset = clamp(toInt(req.query.offset, 0), 0, 1_000_000);
+
+    const status = String(req.query.status || '').trim();
+    const user_id = String(req.query.user_id || '').trim();
+    const reward_id = String(req.query.reward_id || '').trim();
+
+    const where = [];
+    const params = [];
+
+    const allowedStatuses = new Set([
+      'pending',
+      'approved',
+      'used',
+      'expired',
+      'rejected',
+      'cancelled',
+    ]);
+
+    if (allowedStatuses.has(status)) {
+      where.push('rr.status = ?');
+      params.push(status);
+    }
+    if (user_id && /^\d+$/.test(user_id)) {
+      where.push('rr.user_id = ?');
+      params.push(Number(user_id));
+    }
+    if (reward_id && /^\d+$/.test(reward_id)) {
+      where.push('rr.reward_id = ?');
+      params.push(Number(reward_id));
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        rr.id,
+        rr.user_id,
+        rr.reward_id,
+        rr.cost_points,
+        rr.status,
+        rr.created_at,
+        rr.voucher_code,
+        rr.qr_payload,
+        rr.qr_image_url,
+        rr.expires_at,
+        rr.used_at,
+        CONCAT(COALESCE(u.fname,''),' ',COALESCE(u.lname,'')) AS user_name,
+        u.email AS user_email,
+        rw.title AS reward_title
+      FROM ${REDEMPTION_TABLE} rr
+      LEFT JOIN users u ON u.user_id = rr.user_id
+      LEFT JOIN reward rw ON rw.id = rr.reward_id
+      ${whereSql}
+      ORDER BY rr.created_at DESC, rr.id DESC
+      LIMIT ? OFFSET ?
+      `,
+      [...params, limit, offset]
+    );
+
+    const [[cntRow]] = await db.query(
+      `
+      SELECT COUNT(*) AS cnt
+      FROM ${REDEMPTION_TABLE} rr
+      ${whereSql}
+      `,
+      params
+    );
+
+    return res.json({
+      success: true,
+      data: rows,
+      pagination: {
+        total: Number(cntRow?.cnt || 0),
+        limit,
+        offset,
+      },
+    });
+  } catch (err) {
+    console.error('GET /admin/rewards/redemptions error:', err);
+    return res.status(500).json({ message: 'DB error on redemptions list' });
+  }
+});
+
+
 module.exports = router;
